@@ -124,12 +124,11 @@ def test_compress_identity_round_trips_exactly(client_data, params):
     assert comp.client_id == local.client_id and comp.round_id == local.round_id
 
 
-def test_compress_topk_and_quantization_not_implemented(client_data, params):
+def test_compress_quantization_not_implemented(client_data, params):
     local_cfg = LocalConfig(lr=0.5, local_steps=1, batch_size=8)
     local = local_train(params, "client_0", client_data, 0, local_cfg, StubRng(5))
-    for kind in ("topk", "quantization"):
-        with pytest.raises(NotImplementedError):
-            compress(local, CompressionConfig(kind=kind), StubRng(5))
+    with pytest.raises(NotImplementedError):
+        compress(local, CompressionConfig(kind="quantization"), StubRng(5))
 
 
 def _compressed(client_id: str, update: np.ndarray, round_id: int = 0):

@@ -1,0 +1,37 @@
+# C1 compression failure (Task T4) — mirrors synthetic_reference.yaml, with a
+# slower local config (lr 0.05, 3 steps) so the sparsification bites before
+# convergence. On rounds 2-9 every client update is top-k sparsified to
+# ceil(0.05 * 42) = 3 of 42 coordinates by magnitude.
+run_id: synthetic_compression_failure
+seed: 42
+rounds: 10
+dataset:
+  name: synthetic
+  num_clients: 10
+  num_features: 20
+  num_classes: 2
+  samples_per_client: 100
+  heterogeneity: 0.0
+  minority_class: 1
+  minority_client_fraction: 0.2
+  seed: 1001
+selection:
+  clients_per_round: 5
+  policy: uniform
+local:
+  lr: 0.05
+  local_steps: 3
+  batch_size: 32
+compression:
+  kind: identity
+  parameters: {}
+aggregation:
+  rule: weighted_mean
+  parameters: {}
+failure:
+  stage: compression
+  type: aggressive_topk
+  active_rounds: [2, 9]
+  severity: 1
+  parameters:
+    k_ratio: 0.05

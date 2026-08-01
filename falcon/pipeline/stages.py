@@ -7,6 +7,7 @@ Pure numpy; all randomness comes from the named streams of the provided rng.
 from __future__ import annotations
 
 import hashlib
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -123,18 +124,52 @@ def local_train(
     )
 
 
+def _topk(update: np.ndarray, k: int) -> np.ndarray:
+    """Keep the ``k`` largest-|value| coordinates of ``update``, zero the rest.
+
+    Deterministic tie-break: among tied magnitudes the LARGER index is kept —
+    a stable ascending argsort orders ties by increasing index, so the kept
+    suffix of the ordering holds the larger indices. Exact float64, no
+    randomness.
+    """
+    order = np.argsort(np.abs(update), kind="stable")
+    out = update.copy()
+    out[order[: update.shape[0] - k]] = 0.0
+    return out
+
+
 def compress(local_state: ClientLocalState, cfg: CompressionConfig, rng: "Rng") -> CompressionState:
-    """Identity compression only; copies the update and round-trips exactly."""
-    if cfg.kind != "identity":
-        raise NotImplementedError(f"compression kind {cfg.kind!r} not implemented yet")
+    """Compress one client's update for transmission.
+
+    ``identity`` (default) copies the update and round-trips exactly.
+    ``topk`` keeps the top ``ceil(k_ratio * n)`` coordinates by magnitude
+    (``k_ratio`` in ``cfg.parameters``, in (0, 1]) and zeroes the rest, with
+    the larger-index tie-break of ``_topk``; ``bytes_transmitted`` is
+    ``nnz * 8 + nnz * 4`` (8 bytes per value, 4 per coordinate index) where
+    ``nnz`` counts the nonzeros of the sparsified update actually sent.
+    """
     update = np.array(local_state.update, dtype=np.float64, copy=True)
+    uncompressed_hash = _sha256(update)
+    if cfg.kind == "identity":
+        compressed = update
+        bytes_transmitted = update.nbytes
+    elif cfg.kind == "topk":
+        k_ratio = float(cfg.parameters["k_ratio"])
+        if not math.isfinite(k_ratio) or not 0.0 < k_ratio <= 1.0:
+            raise ValueError(f"topk k_ratio must be in (0, 1], got {k_ratio}")
+        k = min(update.shape[0], math.ceil(k_ratio * update.shape[0]))
+        compressed = _topk(update, k)
+        nnz = int(np.count_nonzero(compressed))
+        bytes_transmitted = nnz * 8 + nnz * 4
+    else:
+        raise NotImplementedError(f"compression kind {cfg.kind!r} not implemented yet")
     return CompressionState(
         round_id=local_state.round_id,
         client_id=local_state.client_id,
-        uncompressed_hash=_sha256(update),
-        update=update,
+        uncompressed_hash=uncompressed_hash,
+        update=compressed,
         compression_params=dict(cfg.parameters),
-        bytes_transmitted=update.nbytes,
+        bytes_transmitted=bytes_transmitted,
     )
 
 

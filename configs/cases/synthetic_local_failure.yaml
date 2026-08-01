@@ -1,0 +1,39 @@
+# L1 local-training failure (Task T4) — mirrors synthetic_reference.yaml,
+# with a slower local config (lr 0.05, 3 steps) so the misconfiguration bites
+# before convergence. Four clients train with a sign-flipped learning rate
+# (lr_multiplier -1.0, the Plan §10.2 L1 "sign error" sanity case: on this
+# separable task a merely larger/smaller lr does not measurably degrade).
+run_id: synthetic_local_failure
+seed: 42
+rounds: 10
+dataset:
+  name: synthetic
+  num_clients: 10
+  num_features: 20
+  num_classes: 2
+  samples_per_client: 100
+  heterogeneity: 0.0
+  minority_class: 1
+  minority_client_fraction: 0.2
+  seed: 1001
+selection:
+  clients_per_round: 5
+  policy: uniform
+local:
+  lr: 0.05
+  local_steps: 3
+  batch_size: 32
+compression:
+  kind: identity
+  parameters: {}
+aggregation:
+  rule: weighted_mean
+  parameters: {}
+failure:
+  stage: local
+  type: lr_misconfig
+  active_rounds: [2, 9]
+  severity: 1
+  parameters:
+    affected_clients: [client_1, client_3, client_5, client_7]
+    lr_multiplier: -1.0

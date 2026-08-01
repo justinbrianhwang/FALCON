@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+from falcon.failures import build_injector
 from falcon.schema import OutcomeState, RunConfig
 
 from .stages import aggregate, compress, evaluate, init_params, local_train, select_clients
@@ -10,9 +11,10 @@ from .synthetic_data import make_eval_data, make_partition
 
 
 def _stage(name: str, fn: Callable):
-    # T4 FAILURE HOOK: a FailureSpecification wrapper (falcon/failures/) will
-    # wrap each stage callable at this single call site. Keep it the only
-    # place stages are invoked from.
+    # T4 FAILURE HOOK: when cfg.failure is set, the FailureInjector built in
+    # run() transforms this stage's inputs immediately before fn() runs
+    # (candidate pool, per-client local/compression configs, aggregation
+    # weights). Keep this the only place stages are invoked from.
     return fn()
 
 
@@ -39,10 +41,17 @@ def run(cfg: RunConfig, recorder=None, rng=None) -> list[OutcomeState]:
     params = init_params(cfg.dataset.num_features, cfg.dataset.num_classes, rng)
     pool = sorted(partition)
 
+    # T4: one injector per run; None for reference runs, which then execute
+    # exactly as before (byte-identical stage hashes).
+    injector = None
+    if cfg.failure is not None:
+        injector = build_injector(cfg.failure, partition, rng)
+
     outcomes: list[OutcomeState] = []
     for round_id in range(cfg.rounds):
+        round_pool = pool if injector is None else injector.candidate_pool(pool, round_id)
         selection = _stage(
-            "selection", lambda: select_clients(pool, round_id, cfg.selection, rng)
+            "selection", lambda: select_clients(round_pool, round_id, cfg.selection, rng)
         )
         _record(recorder, round_id, "selection", selection)
 
@@ -52,7 +61,14 @@ def run(cfg: RunConfig, recorder=None, rng=None) -> list[OutcomeState]:
             _stage(
                 "local",
                 lambda cid=cid: local_train(
-                    params, cid, partition[cid], round_id, cfg.local, rng
+                    params,
+                    cid,
+                    partition[cid],
+                    round_id,
+                    cfg.local
+                    if injector is None
+                    else injector.local_cfg(cid, cfg.local, round_id),
+                    rng,
                 ),
             )
             for cid in selection.selected_ids
@@ -61,13 +77,24 @@ def run(cfg: RunConfig, recorder=None, rng=None) -> list[OutcomeState]:
 
         compressed = [
             _stage(
-                "compression", lambda s=state: compress(s, cfg.compression, rng)
+                "compression",
+                lambda s=state: compress(
+                    s,
+                    cfg.compression
+                    if injector is None
+                    else injector.compression_cfg(
+                        s.client_id, cfg.compression, round_id
+                    ),
+                    rng,
+                ),
             )
             for state in local_states
         ]
         _record(recorder, round_id, "compression", compressed)
 
         weights = {s.client_id: float(s.num_examples) for s in local_states}
+        if injector is not None:
+            weights = injector.weights(weights, round_id)
         aggregation = _stage(
             "aggregation",
             lambda: aggregate(compressed, weights, cfg.aggregation, rng),
