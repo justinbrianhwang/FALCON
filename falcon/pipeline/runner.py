@@ -23,13 +23,24 @@ def _record(recorder, round_id: int, stage: str, state) -> None:
         recorder.record(round_id, stage, state)
 
 
-def run(cfg: RunConfig, recorder=None, rng=None) -> list[OutcomeState]:
+def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeState]:
     """Run ``cfg.rounds`` federated rounds and return per-round outcomes.
 
     ``recorder`` is duck-typed: any object with
     ``record(round_id, stage, state)``. ``rng`` must provide the named-stream
     interface of CONTRACTS §3; when omitted, ``falcon.replay.rng.Rng`` (T3)
     is imported lazily.
+
+    ``overlay`` (T5) is duck-typed: any object with
+    ``override(round_id, stage, state)`` returning the (possibly replaced)
+    state the downstream pipeline must consume. It is called at every stage
+    boundary AFTER the stage computes and AFTER failure injection, BEFORE
+    recording and before downstream use. Consumption semantics: replacing
+    ``selection`` changes which clients train; replacing ``local`` /
+    ``compression`` (list states) changes what aggregation sees; replacing
+    ``aggregation`` changes the model update; replacing ``evaluation`` only
+    changes the recorded outcome. The default ``None`` keeps the pre-overlay
+    behavior byte-identical.
     """
     if rng is None:
         from falcon.replay.rng import Rng  # provided by T3 (Codex); CONTRACTS §3
@@ -53,6 +64,8 @@ def run(cfg: RunConfig, recorder=None, rng=None) -> list[OutcomeState]:
         selection = _stage(
             "selection", lambda: select_clients(round_pool, round_id, cfg.selection, rng)
         )
+        if overlay is not None:
+            selection = overlay.override(round_id, "selection", selection)
         _record(recorder, round_id, "selection", selection)
 
         # Per-client stages are recorded ONCE per stage, as a list of states
@@ -73,6 +86,8 @@ def run(cfg: RunConfig, recorder=None, rng=None) -> list[OutcomeState]:
             )
             for cid in selection.selected_ids
         ]
+        if overlay is not None:
+            local_states = overlay.override(round_id, "local", local_states)
         _record(recorder, round_id, "local", local_states)
 
         compressed = [
@@ -90,6 +105,8 @@ def run(cfg: RunConfig, recorder=None, rng=None) -> list[OutcomeState]:
             )
             for state in local_states
         ]
+        if overlay is not None:
+            compressed = overlay.override(round_id, "compression", compressed)
         _record(recorder, round_id, "compression", compressed)
 
         weights = {s.client_id: float(s.num_examples) for s in local_states}
@@ -99,12 +116,16 @@ def run(cfg: RunConfig, recorder=None, rng=None) -> list[OutcomeState]:
             "aggregation",
             lambda: aggregate(compressed, weights, cfg.aggregation, rng),
         )
+        if overlay is not None:
+            aggregation = overlay.override(round_id, "aggregation", aggregation)
         _record(recorder, round_id, "aggregation", aggregation)
 
         params = params + aggregation.aggregate
 
         outcome = _stage("evaluation", lambda: evaluate(params, eval_data))
         outcome.round_id = round_id
+        if overlay is not None:
+            outcome = overlay.override(round_id, "evaluation", outcome)
         _record(recorder, round_id, "evaluation", outcome)
         outcomes.append(outcome)
 
