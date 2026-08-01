@@ -18,6 +18,9 @@ data/
 *.pth
 *.safetensors
 
+# tool scratch
+.codex-pytest-tmp/
+
 # editor / os
 .vscode/
 .idea/

@@ -2,7 +2,9 @@
 
 **Failure Attribution and Localized Causal Interventions in Federated Learning.**
 
-Localizes *where* an FL pipeline first fails (Selection → Local Training → Compression → Aggregation → Evaluation) by recording stage-level states in matched reference/failure run pairs and performing Restore / Inject / Sham interventions.
+![FALCON overview: matched reference/failure runs with restore and inject interventions](assets/figs/hero.png)
+
+Localizes *where* an FL pipeline first fails (Selection → Local Training → Compression → Aggregation → Evaluation) by recording stage-level states in matched reference/failure run pairs and performing Restore / Inject / Sham interventions. Terminal metrics tell you *that* a run failed; FALCON separates the **originator** stage from downstream **amplifiers**, **suppressors**, and **bystanders**.
 
 Full research plan: [Plan.md](Plan.md). Stage interface contract: [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
@@ -30,6 +32,12 @@ pytest
 GPU note: `environment.yml` installs default (CPU) PyTorch — enough for the numpy-only MVP. Swap in a CUDA build per machine when Tier 1 (CIFAR) experiments start.
 
 Exact dependency versions will be pinned (lockfile) once the MVP stabilizes — before any paper-facing experiment.
+
+## Architecture
+
+<p align="center">
+  <img src="assets/figs/system-architecture.png" alt="FALCON components: federated execution, state recorder, paired run matcher, intervention engine, attribution analyzer, report generator" width="480">
+</p>
 
 ## Layout
 
