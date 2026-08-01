@@ -12,11 +12,15 @@ runs/
 figures/*.png
 figures/*.pdf
 
-# data
-data/
+# data (machine-local; only the README is tracked)
+data/*
+!data/README.md
 *.pt
 *.pth
 *.safetensors
+
+# coauthor bundles / scratch
+tmp/
 
 # tool scratch
 .codex-pytest-tmp/

@@ -31,6 +31,16 @@ pytest
 
 GPU note: `environment.yml` installs default (CPU) PyTorch — enough for the numpy-only MVP. Swap in a CUDA build per machine when Tier 1 (CIFAR) experiments start.
 
+## Datasets (per machine)
+
+Dataset location is resolved by `falcon/data_paths.py`: `FALCON_DATA_ROOT` env var if set, else `./data`.
+
+- **Machine with an existing torchvision root** (e.g. `D:\pythondata\torch data`):
+  `setx FALCON_DATA_ROOT "D:\pythondata\torch data"` — nothing is re-downloaded.
+- **Fresh machine (co-author):** set nothing. `python scripts/prepare_data.py --datasets cifar10,cifar100,mnist,fmnist,svhn` downloads into `./data` and exports standardized pickles to `./data/processed/<name>.pkl` (keys: `x_train,y_train,x_test,y_test`).
+
+The FL pipeline (Tier 1+) reads only the processed pickles, so both machines run identical code.
+
 Exact dependency versions will be pinned (lockfile) once the MVP stabilizes — before any paper-facing experiment.
 
 ## Architecture
