@@ -35,6 +35,8 @@ def aggregate(compressed: list[CompressionState], weights: dict[str, float],
 def evaluate(model_params: np.ndarray, eval_data: EvalData) -> OutcomeState: ...
 ```
 
+Runner entry point: `run(cfg: RunConfig, recorder=None, rng=None)` — `rng` is injectable for tests, defaults to `Rng(cfg.seed)`. Per-client stages ("local", "compression") are recorded **once per stage as a list** of states, never once per client.
+
 MVP model params are a flat `np.ndarray` (float64) — logistic regression first. Torch enters at Tier 1 (CIFAR); do not import torch in `falcon/schema` or the synthetic pipeline.
 
 ## 2. Stage names (string enum, used everywhere)
@@ -66,7 +68,7 @@ evaluation
 - `Recorder.record(round_id: int, stage: str, state: BaseModel) -> None`
 - Storage: one run directory `runs/<run_id>/` with `metadata.json`, per-round `round_<t>/<stage>.json` (+ `.npz` for arrays).
 - Every recorded state carries `content_hash` (sha256 of canonical serialized bytes).
-- `Recorder.load(run_id, round_id, stage)` returns the pydantic object back, bit-identical arrays.
+- `Recorder.load(round_id, stage)` returns the pydantic object back, bit-identical arrays (`run_id` is bound at construction).
 
 ## 5. Determinism ground rules
 
