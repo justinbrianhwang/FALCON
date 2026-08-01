@@ -91,6 +91,8 @@ class PairValidationReport(BaseModel):
     status: Literal["MATCHED", "MATCHED_WITH_WARNINGS", "INVALID_PAIR"]
     checks: dict[str, bool]
     warnings: list[str] = Field(default_factory=list)
+    first_divergence_round: Optional[int] = None
+    first_divergence_stage: Optional[Stage] = None
 
 
 class AttributionReport(BaseModel):
