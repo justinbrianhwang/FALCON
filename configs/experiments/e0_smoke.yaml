@@ -1,0 +1,51 @@
+- run_id: e0_clean
+  seed: 42
+  rounds: 3
+  dataset:
+    name: synthetic
+    num_clients: 4
+    num_features: 4
+    num_classes: 2
+    samples_per_client: 16
+    heterogeneity: 0.1
+    seed: 1001
+  selection:
+    clients_per_round: 2
+  local:
+    lr: 0.1
+    local_steps: 1
+    batch_size: 8
+  compression:
+    kind: identity
+  aggregation:
+    rule: weighted_mean
+  failure: null
+
+- run_id: e0_with_failure_spec
+  seed: 43
+  rounds: 3
+  dataset:
+    name: synthetic
+    num_clients: 4
+    num_features: 4
+    num_classes: 2
+    samples_per_client: 16
+    heterogeneity: 0.1
+    seed: 1002
+  selection:
+    clients_per_round: 2
+  local:
+    lr: 0.1
+    local_steps: 1
+    batch_size: 8
+  compression:
+    kind: identity
+  aggregation:
+    rule: weighted_mean
+  failure:
+    stage: compression
+    type: aggressive_topk
+    active_rounds: [1, 1]
+    severity: 1
+    parameters:
+      k_ratio: 0.5
