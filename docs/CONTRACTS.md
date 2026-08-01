@@ -52,16 +52,22 @@ MVP model params are a flat `np.ndarray` (float64) — logistic regression first
 ```
 global_init
 client_selection
-client.<id>.dataloader
-client.<id>.optimizer
+client.<id>.round.<t>.dataloader
+client.<id>.round.<t>.optimizer
 compression.<id>
 aggregation
 evaluation
+failure.<stage>
 ```
 
 - Constructed from a single root seed via `numpy.random.SeedSequence.spawn` keyed by stream name (order-independent: hashing the name, not creation order).
 - `Rng.state_dict()` / `Rng.load_state_dict()` for recording and replay.
 - A failure injector must use its **own** stream (`failure.<stage>`), never a shared one.
+- **v0.2 amendment:** per-client stochastic streams are keyed by **(client, round)**, not client
+  alone. With persistent per-client streams, changing which rounds a client participates in
+  (e.g. a selection intervention) advances or freezes its stream and contaminates its
+  later-round minibatches — the intervention then measures RNG drift, not state causation.
+  Round-keyed streams make a client's round-t draws independent of its participation history.
 
 ## 4. Recorder contract
 
