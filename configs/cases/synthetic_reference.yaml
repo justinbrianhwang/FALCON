@@ -1,0 +1,28 @@
+# Reference synthetic case — maps 1:1 onto falcon.schema.RunConfig (CONTRACTS §6).
+run_id: synthetic_reference
+seed: 42
+rounds: 10
+dataset:
+  name: synthetic
+  num_clients: 10
+  num_features: 20
+  num_classes: 2
+  samples_per_client: 100
+  heterogeneity: 0.0
+  minority_class: null
+  minority_client_fraction: 0.2
+  seed: 1001
+selection:
+  clients_per_round: 5
+  policy: uniform
+local:
+  lr: 0.1
+  local_steps: 5
+  batch_size: 32
+compression:
+  kind: identity
+  parameters: {}
+aggregation:
+  rule: weighted_mean
+  parameters: {}
+failure: null

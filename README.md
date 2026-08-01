@@ -10,12 +10,24 @@ Full research plan: [Plan.md](Plan.md). Stage interface contract: [docs/CONTRACT
 
 ## Setup (both machines)
 
+Conda (recommended):
+
+```bash
+conda env create -f environment.yml
+conda activate falcon
+pytest   # smoke check
+```
+
+Or plain venv:
+
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate    Linux/mac: source .venv/bin/activate
 pip install -e ".[dev]"
-pytest   # smoke check
+pytest
 ```
+
+GPU note: `environment.yml` installs default (CPU) PyTorch — enough for the numpy-only MVP. Swap in a CUDA build per machine when Tier 1 (CIFAR) experiments start.
 
 Exact dependency versions will be pinned (lockfile) once the MVP stabilizes — before any paper-facing experiment.
 
