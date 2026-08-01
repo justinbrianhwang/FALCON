@@ -1,0 +1,26 @@
+[project]
+name = "falcon-fl"
+version = "0.0.1"
+description = "FALCON: Failure Attribution and Localized Causal Interventions in Federated Learning (working name)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "torch>=2.2",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["falcon*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

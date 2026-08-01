@@ -1,0 +1,25 @@
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# experiment outputs (never commit raw runs)
+results/
+runs/
+figures/*.png
+figures/*.pdf
+
+# data
+data/
+*.pt
+*.pth
+*.safetensors
+
+# editor / os
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
