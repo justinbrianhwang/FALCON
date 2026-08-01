@@ -41,6 +41,12 @@ Dataset location is resolved by `falcon/data_paths.py`: `FALCON_DATA_ROOT` env v
 
 The FL pipeline (Tier 1+) reads only the processed pickles, so both machines run identical code.
 
+## Sharing results
+
+After running experiments: `python scripts/collect_output.py` → `tmp/Output_<date_time>.zip`
+(metrics, stage hashes, reports, configs, environment snapshot; add `--full` to include raw
+recorded tensors). Send that zip back for analysis.
+
 Exact dependency versions will be pinned (lockfile) once the MVP stabilizes — before any paper-facing experiment.
 
 ## Architecture
