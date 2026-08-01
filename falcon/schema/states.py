@@ -95,11 +95,23 @@ class PairValidationReport(BaseModel):
     first_divergence_stage: Optional[Stage] = None
 
 
+AttributionOutcome = Literal[
+    "unique_origin",       # evidence supports one stage
+    "origin_set",          # several stages jointly implicated
+    "unresolved",          # interventionally indistinguishable / missing controls
+    "insufficient_failure_gap",
+    "invalid_pair",
+    "sham_violation",
+]
+
+
 class AttributionReport(BaseModel):
     pair: PairValidationReport
+    outcome: AttributionOutcome
     failure_gap: dict[str, float]
     stage_effects: dict[str, dict[str, float]]  # stage -> {"SRE":..,"SIE":..,"nSRE":..,"nSIE":..}
     origin_ranking: list[str]
+    origin_set: list[str] = Field(default_factory=list)  # filled when outcome != unique_origin
     roles: dict[str, str] = Field(default_factory=dict)  # stage -> originator/amplifier/...
     notes: list[str] = Field(default_factory=list)
 
