@@ -7,6 +7,7 @@ Pure numpy; all randomness comes from the named streams of the provided rng.
 from __future__ import annotations
 
 import hashlib
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -23,6 +24,9 @@ from falcon.schema import (
 )
 
 from .synthetic_data import ClientData, EvalData
+
+if TYPE_CHECKING:
+    from falcon.replay.rng import Rng  # CONTRACTS §3; deferred to avoid import cycles
 
 
 def _sha256(params: np.ndarray) -> str:
@@ -68,7 +72,7 @@ def init_params(num_features: int, num_classes: int, rng) -> np.ndarray:
 
 
 def select_clients(
-    pool: list[str], round_id: int, cfg: SelectionConfig, rng
+    pool: list[str], round_id: int, cfg: SelectionConfig, rng: "Rng"
 ) -> SelectionState:
     """Uniform sampling without replacement, stream ``client_selection``."""
     gen = rng.stream("client_selection")
@@ -80,6 +84,7 @@ def select_clients(
         candidate_ids=list(pool),
         selected_ids=selected,
         sampling_probs={cid: inclusion_prob for cid in pool},
+        rng_state={"client_selection": gen.bit_generator.state},
     )
 
 
@@ -89,7 +94,7 @@ def local_train(
     data: ClientData,
     round_id: int,
     cfg: LocalConfig,
-    rng,
+    rng: "Rng",
 ) -> ClientLocalState:
     """Plain minibatch SGD on softmax cross-entropy.
 
@@ -114,10 +119,11 @@ def local_train(
         num_examples=n,
         num_steps=cfg.local_steps,
         loss_history=loss_history,
+        rng_state={f"client.{client_id}.dataloader": gen.bit_generator.state},
     )
 
 
-def compress(local_state: ClientLocalState, cfg: CompressionConfig, rng) -> CompressionState:
+def compress(local_state: ClientLocalState, cfg: CompressionConfig, rng: "Rng") -> CompressionState:
     """Identity compression only; copies the update and round-trips exactly."""
     if cfg.kind != "identity":
         raise NotImplementedError(f"compression kind {cfg.kind!r} not implemented yet")
@@ -136,16 +142,32 @@ def aggregate(
     compressed: list[CompressionState],
     weights: dict[str, float],
     cfg: AggregationConfig,
-    rng,
+    rng: "Rng",
 ) -> AggregationState:
     """``weighted_mean`` by the weights arg (num_examples) or ``uniform_mean``."""
     if not compressed:
         raise ValueError("aggregate() needs at least one CompressionState")
     ids = [c.client_id for c in compressed]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"aggregate() got duplicate client ids: {ids}")
     updates = np.stack([c.update for c in compressed])
     if cfg.rule == "weighted_mean":
+        missing = sorted(set(ids) - set(weights))
+        extra = sorted(set(weights) - set(ids))
+        if missing or extra:
+            raise ValueError(
+                "weights must cover exactly the received clients "
+                f"(missing={missing}, extra={extra})"
+            )
         raw = np.array([weights[cid] for cid in ids], dtype=np.float64)
-        coeffs = raw / raw.sum()
+        if not np.all(np.isfinite(raw)):
+            raise ValueError(f"weights must be finite, got {raw.tolist()}")
+        if np.any(raw < 0.0):
+            raise ValueError(f"weights must be nonnegative, got {raw.tolist()}")
+        total = float(raw.sum())
+        if total <= 0.0:
+            raise ValueError("total weight must be positive")
+        coeffs = raw / total
     elif cfg.rule == "uniform_mean":
         coeffs = np.full(len(ids), 1.0 / len(ids), dtype=np.float64)
     else:

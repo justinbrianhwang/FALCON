@@ -20,7 +20,14 @@ from falcon.schema import (
     SelectionState,
 )
 
-from .hashing import _ARRAY_MARKER, _split_model, hash_model
+from .hashing import (
+    _ARRAY_MARKER,
+    _FLOAT_MARKER,
+    _encode_non_finite,
+    _split_model,
+    _validate_any_fields,
+    hash_model,
+)
 
 _MODEL_TYPES: dict[str, type[BaseModel]] = {
     model.__name__: model
@@ -33,6 +40,12 @@ _MODEL_TYPES: dict[str, type[BaseModel]] = {
     )
 }
 _PER_CLIENT_STAGES = {"local", "compression"}
+_ARRAY_REFERENCE_KEYS = {_ARRAY_MARKER, "dtype", "shape", "path"}
+_FLOAT_SENTINELS = {
+    "NaN": float("nan"),
+    "Infinity": float("inf"),
+    "-Infinity": float("-inf"),
+}
 
 
 def _safe_component(value: str, label: str) -> str:
@@ -50,6 +63,11 @@ def _sidecar(path: Path, suffix: str) -> Path:
     return path.parent / f"{path.name}{suffix}"
 
 
+def _validate_round_id(round_id: int) -> None:
+    if not isinstance(round_id, int) or isinstance(round_id, bool):
+        raise TypeError("round_id must be an int")
+
+
 class Recorder:
     """Persist metadata and stage states under ``root_dir/runs/run_id``."""
 
@@ -61,6 +79,7 @@ class Recorder:
     def save_metadata(self, meta: RunMetadata) -> None:
         if not isinstance(meta, RunMetadata):
             raise TypeError("meta must be RunMetadata")
+        _validate_any_fields(meta)
         self._write_json(
             self.run_dir / "metadata.json", meta.model_dump(mode="json")
         )
@@ -68,8 +87,11 @@ class Recorder:
     def record(
         self, round_id: int, stage: str, state: BaseModel | list[BaseModel]
     ) -> None:
+        _validate_round_id(round_id)
         if stage not in STAGES:
             raise ValueError(f"unknown stage: {stage!r}")
+        if stage in _PER_CLIENT_STAGES and not isinstance(state, list):
+            raise TypeError(f"stage {stage!r} requires a state list")
         round_dir = self.run_dir / f"round_{round_id}"
         round_dir.mkdir(parents=True, exist_ok=True)
 
@@ -88,9 +110,12 @@ class Recorder:
                 client_id = _safe_component(
                     getattr(model, "client_id", None), "client_id"
                 )
-                if client_id in seen:
+                if client_id.endswith((".", " ")):
+                    raise ValueError(f"invalid client_id: {client_id!r}")
+                normalized_id = client_id.casefold()
+                if normalized_id in seen:
                     raise ValueError(f"duplicate client_id: {client_id!r}")
-                seen.add(client_id)
+                seen.add(normalized_id)
                 self._write_model(stage_dir / client_id, model, index=index)
             return
 
@@ -104,6 +129,7 @@ class Recorder:
         self._write_model(path, state)
 
     def load(self, round_id: int, stage: str) -> BaseModel | list[BaseModel]:
+        _validate_round_id(round_id)
         if stage not in STAGES:
             raise ValueError(f"unknown stage: {stage!r}")
         path = self.run_dir / f"round_{round_id}" / stage
@@ -196,7 +222,13 @@ class Recorder:
     @classmethod
     def _restore_value(cls, value: Any, arrays: dict[str, np.ndarray]) -> Any:
         if isinstance(value, dict):
-            if _ARRAY_MARKER in value:
+            if (
+                set(value) == {_FLOAT_MARKER}
+                and isinstance(value[_FLOAT_MARKER], str)
+                and value[_FLOAT_MARKER] in _FLOAT_SENTINELS
+            ):
+                return _FLOAT_SENTINELS[value[_FLOAT_MARKER]]
+            if _ARRAY_REFERENCE_KEYS <= value.keys():
                 key = value[_ARRAY_MARKER]
                 try:
                     array = arrays[key]
@@ -220,7 +252,7 @@ class Recorder:
     def _write_json(path: Path, data: Any) -> None:
         path.write_text(
             json.dumps(
-                data,
+                _encode_non_finite(data),
                 allow_nan=False,
                 ensure_ascii=False,
                 indent=2,

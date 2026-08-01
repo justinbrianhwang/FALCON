@@ -49,7 +49,11 @@ class Rng:
         }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
-        """Replace this registry with a snapshot produced by ``state_dict``."""
+        """Replace this registry with a snapshot produced by ``state_dict``.
+
+        Previously returned generators are stale after this call; re-fetch every
+        stream from this registry before drawing more values.
+        """
         try:
             root_seed = state["root_seed"]
             stream_states = state["streams"]

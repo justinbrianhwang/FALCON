@@ -46,24 +46,26 @@ def run(cfg: RunConfig, recorder=None, rng=None) -> list[OutcomeState]:
         )
         _record(recorder, round_id, "selection", selection)
 
-        local_states = []
-        for cid in selection.selected_ids:
-            state = _stage(
+        # Per-client stages are recorded ONCE per stage, as a list of states
+        # (CONTRACTS §1), never once per client.
+        local_states = [
+            _stage(
                 "local",
                 lambda cid=cid: local_train(
                     params, cid, partition[cid], round_id, cfg.local, rng
                 ),
             )
-            _record(recorder, round_id, "local", state)
-            local_states.append(state)
+            for cid in selection.selected_ids
+        ]
+        _record(recorder, round_id, "local", local_states)
 
-        compressed = []
-        for state in local_states:
-            cstate = _stage(
+        compressed = [
+            _stage(
                 "compression", lambda s=state: compress(s, cfg.compression, rng)
             )
-            _record(recorder, round_id, "compression", cstate)
-            compressed.append(cstate)
+            for state in local_states
+        ]
+        _record(recorder, round_id, "compression", compressed)
 
         weights = {s.client_id: float(s.num_examples) for s in local_states}
         aggregation = _stage(

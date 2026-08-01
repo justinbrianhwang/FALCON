@@ -7,8 +7,8 @@ from falcon.replay.rng import Rng
 from falcon.schema import AggregationState, SelectionState
 
 
-def _record_synthetic_states(root, run_id):
-    rng = Rng(2025)
+def _record_synthetic_states(root, run_id, seed=2025):
+    rng = Rng(seed)
     recorder = Recorder(root, run_id)
     selected = rng.stream("client_selection").choice(5, size=2, replace=False)
     recorder.record(
@@ -37,7 +37,14 @@ def _record_synthetic_states(root, run_id):
     return recorder.stage_hashes()
 
 
+# placeholder — superseded by full pipeline replay test (T2-F)
 def test_same_seed_produces_equal_recorded_stage_hashes(tmp_path):
     assert _record_synthetic_states(tmp_path, "clean-a") == _record_synthetic_states(
         tmp_path, "clean-b"
     )
+
+
+def test_different_seed_produces_different_recorded_stage_hashes(tmp_path):
+    assert _record_synthetic_states(
+        tmp_path, "seed-a", seed=2025
+    ) != _record_synthetic_states(tmp_path, "seed-b", seed=2026)

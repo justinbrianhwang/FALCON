@@ -61,3 +61,15 @@ def test_state_dict_round_trips_mid_sequence():
         original.stream("evaluation").random(20),
         restored.stream("evaluation").random(20),
     )
+
+
+def test_state_dict_returns_an_independent_snapshot():
+    rng = Rng(321)
+    rng.stream("aggregation").random(3)
+    expected = rng.state_dict()
+
+    snapshot = rng.state_dict()
+    snapshot["root_seed"] = 999
+    snapshot["streams"]["aggregation"]["state"]["state"] = 0
+
+    assert rng.state_dict() == expected
