@@ -1,4 +1,6 @@
-"""Build the co-author bundle: repo snapshot with docs/COAUTHOR.md as its README.md.
+"""Build the co-author bundle: runnable code only, docs/COAUTHOR.md as its README.md.
+
+Excluded: Plan.md, docs/, assets/, paper/, figures/ — nothing needed to run.
 
     python scripts/make_coauthor_bundle.py
     -> tmp/FALCON-coauthor-<YYYY-MM-DD>.zip
@@ -23,9 +25,11 @@ def main():
     guide = (REPO / "docs" / "COAUTHOR.md").read_bytes()
 
     with zipfile.ZipFile(io.BytesIO(archive)) as src, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+        skip = ("README.md", "Plan.md")
+        skip_dirs = ("docs/", "assets/", "paper/", "figures/")
         for item in src.infolist():
-            if item.filename == "README.md":
-                continue  # replaced by the co-author guide below
+            if item.filename in skip or item.filename.startswith(skip_dirs):
+                continue
             dst.writestr(item, src.read(item))
         dst.writestr("README.md", guide)
     print(f"[make_coauthor_bundle] -> {out}")
