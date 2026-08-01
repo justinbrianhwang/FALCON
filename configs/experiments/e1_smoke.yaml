@@ -1,0 +1,84 @@
+case_id: e1_smoke
+seed: 42
+metric: loss
+higher_is_better: false
+target_gap: 0.03
+gap_tolerance: 0.005
+max_iterations: 8
+min_gap: 0.005
+sham_tolerance: 1.0e-9
+
+reference:
+  rounds: 5
+  dataset:
+    name: synthetic
+    num_clients: 6
+    num_features: 8
+    num_classes: 2
+    samples_per_client: 32
+    heterogeneity: 0.0
+    minority_class: 1
+    minority_client_fraction: 0.33
+    seed: 1001
+  selection:
+    clients_per_round: 3
+  local:
+    lr: 0.05
+    local_steps: 2
+    batch_size: 16
+  compression:
+    kind: identity
+  aggregation:
+    rule: weighted_mean
+
+failures:
+  - id: selection_minority_exclusion
+    stage: selection
+    type: minority_exclusion
+    active_rounds: [1, 4]
+    parameters:
+      target_class: 1
+    severity:
+      parameter: exclusion_probability
+      bounds: [0.0, 1.0]
+      higher_is_more_severe: true
+
+  - id: compression_aggressive_topk
+    stage: compression
+    type: aggressive_topk
+    active_rounds: [1, 4]
+    parameters: {}
+    severity:
+      parameter: k_ratio
+      bounds: [0.03, 1.0]
+      higher_is_more_severe: false
+
+# Small terminal-only training set: exactly one labeled run for every current
+# built-in failure type, using the same reference config and seed as the pair.
+terminal_training_failures:
+  - stage: selection
+    type: minority_exclusion
+    active_rounds: [1, 4]
+    severity: 1
+    parameters:
+      target_class: 1
+      exclusion_probability: 0.75
+  - stage: local
+    type: lr_misconfig
+    active_rounds: [1, 4]
+    severity: 1
+    parameters:
+      fraction: 0.5
+      lr_multiplier: -1.0
+  - stage: compression
+    type: aggressive_topk
+    active_rounds: [1, 4]
+    severity: 1
+    parameters:
+      k_ratio: 0.05
+  - stage: aggregation
+    type: wrong_sample_weights
+    active_rounds: [1, 4]
+    severity: 1
+    parameters:
+      mode: corrupted
