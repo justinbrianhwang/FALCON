@@ -1,7 +1,9 @@
 import pytest
 
 from falcon.attribution.analyzer import attribute
+from falcon.reporting.report import render_markdown
 from falcon.schema import (
+    FailureSpecification,
     InterventionResult,
     InterventionSpecification,
     PairValidationReport,
@@ -19,7 +21,16 @@ def _pair(first_stage="local"):
     )
 
 
-def _result(stage, mode, value=0.0, *, valid=True, reason=None, metric="accuracy"):
+def _result(
+    stage,
+    mode,
+    value=0.0,
+    *,
+    valid=True,
+    reason=None,
+    metric="accuracy",
+    round_id=1,
+):
     target, source = (
         ("failure", "reference") if mode != "inject" else ("reference", "failure")
     )
@@ -27,7 +38,7 @@ def _result(stage, mode, value=0.0, *, valid=True, reason=None, metric="accuracy
         spec=InterventionSpecification(
             target_run_id=target,
             source_run_id=source,
-            round_id=1,
+            round_id=round_id,
             stage=stage,
             mode=mode,
         ),
@@ -63,6 +74,8 @@ def test_clean_single_stage_attribution():
     )
 
     assert report.failure_gap == {"accuracy": pytest.approx(0.4)}
+    assert report.outcome == "unique_origin"
+    assert report.origin_set == []
     assert report.origin_ranking == ["local", "aggregation", "selection"]
     assert report.roles == {
         "local": "origin_candidate",
@@ -77,6 +90,8 @@ def test_clean_single_stage_attribution():
             "nSIE": 0.9,
             "BIS": 0.9,
             "sham_dev": 0.0,
+            "SAE": 0.36,
+            "n_rounds": 1.0,
         }
     )
 
@@ -89,14 +104,15 @@ def test_first_divergence_wins_downstream_restoration_trap():
             _result("local", "inject", 0.54),
             _result("aggregation", "restore", 0.88),
             _result("aggregation", "inject", 0.52),
+            _result("local", "sham", 0.5),
         ],
-        epsilon_tie=0.1,
     )
 
     assert report.stage_effects["aggregation"]["BIS"] > report.stage_effects["local"]["BIS"]
     assert report.origin_ranking[:2] == ["local", "aggregation"]
     assert report.roles["local"] == "origin_candidate"
     assert report.roles["aggregation"] == "carrier_or_amplifier"
+    assert report.outcome == "unique_origin"
 
 
 def test_sham_violation_kills_whole_report():
@@ -110,6 +126,7 @@ def test_sham_violation_kills_whole_report():
     )
 
     assert report.origin_ranking == []
+    assert report.outcome == "sham_violation"
     assert report.roles == {}
     assert "SHAM_VIOLATION:compression" in report.notes
     assert report.stage_effects["compression"]["sham_dev"] == pytest.approx(0.03)
@@ -127,6 +144,7 @@ def test_insufficient_gap_has_no_ranking():
     )
 
     assert report.origin_ranking == []
+    assert report.outcome == "insufficient_failure_gap"
     assert report.roles == {}
     assert "INSUFFICIENT_FAILURE_GAP" in report.notes
     assert "nSRE" not in report.stage_effects["local"]
@@ -138,11 +156,16 @@ def test_tied_scores_are_reported_as_unresolved():
         [
             _result("local", "restore", 0.82),
             _result("compression", "inject", 0.58),
+            _result("aggregation", "restore", 0.82),
+            _result("local", "sham", 0.5),
         ],
     )
 
-    assert report.origin_ranking[:2] == ["local", "compression"]
-    assert "UNRESOLVED_BETWEEN:local,compression" in report.notes
+    assert report.outcome == "unresolved"
+    assert report.origin_set == ["local", "compression", "aggregation"]
+    assert report.origin_ranking[:3] == report.origin_set
+    assert not any(role == "origin_candidate" for role in report.roles.values())
+    assert "UNRESOLVED_BETWEEN:local,compression,aggregation" in report.notes
 
 
 def test_invalid_interventions_are_excluded_and_named():
@@ -162,3 +185,176 @@ def test_invalid_interventions_are_excluded_and_named():
     assert report.origin_ranking == ["local"]
     assert "selection" not in report.stage_effects
     assert "INVALID_INTERVENTION:selection:restore" in report.notes
+
+
+def test_first_divergence_promotion_beats_pipeline_order_tie_sort():
+    report = _attribute(
+        _pair("local"),
+        [
+            _result("selection", "restore", 0.86),
+            _result("selection", "inject", 0.54),
+            _result("local", "restore", 0.86),
+            _result("local", "inject", 0.54),
+            _result("local", "sham", 0.5),
+        ],
+    )
+
+    assert report.origin_ranking[:2] == ["local", "selection"]
+    assert report.outcome == "unresolved"
+    assert report.origin_set == ["local", "selection"]
+
+
+@pytest.mark.parametrize("m_ref", [0.5, float("nan")])
+def test_nonpositive_or_nonfinite_gap_is_insufficient(m_ref):
+    report = attribute(
+        _pair("local"),
+        [_result("local", "restore", 0.85), _result("local", "sham", 0.9)],
+        metric="accuracy",
+        m_ref=m_ref,
+        m_fail=0.9,
+        min_gap=0.01,
+        sham_tolerance=0.01,
+    )
+
+    assert report.outcome == "insufficient_failure_gap"
+    assert report.origin_ranking == []
+    assert "INSUFFICIENT_FAILURE_GAP" in report.notes
+    if m_ref == 0.5:
+        assert "NONPOSITIVE_FAILURE_GAP" in report.notes
+
+
+def test_nonfinite_intervention_metric_is_rejected():
+    report = _attribute(
+        _pair("local"),
+        [_result("local", "restore", float("nan")), _result("local", "sham", 0.5)],
+    )
+
+    assert "INVALID_INTERVENTION:local:restore" in report.notes
+    assert "nSRE" not in report.stage_effects["local"]
+    assert report.outcome == "unresolved"
+
+
+def test_multi_round_effects_are_means_and_report_round_count():
+    report = _attribute(
+        _pair("local"),
+        [
+            _result("local", "restore", 0.55, round_id=1),
+            _result("local", "restore", 0.85, round_id=2),
+            _result("local", "inject", 0.85, round_id=1),
+            _result("local", "inject", 0.55, round_id=2),
+            _result("local", "sham", 0.5, round_id=1),
+            _result("local", "sham", 0.5, round_id=2),
+        ],
+    )
+
+    assert report.stage_effects["local"] == pytest.approx(
+        {
+            "n_rounds": 2,
+            "SRE": 0.2,
+            "nSRE": 0.5,
+            "SIE": 0.2,
+            "nSIE": 0.5,
+            "BIS": 0.5,
+            "sham_dev": 0.0,
+            "SAE": 0.2,
+        }
+    )
+
+
+def test_multi_round_sign_disagreement_is_noted():
+    report = _attribute(
+        _pair("local"),
+        [
+            _result("local", "restore", 0.45, round_id=1),
+            _result("local", "restore", 0.85, round_id=2),
+            _result("local", "sham", 0.5, round_id=1),
+        ],
+    )
+
+    assert "ROUND_SIGN_DISAGREEMENT:local:restore" in report.notes
+
+
+@pytest.mark.parametrize("sham_valid", [None, False])
+def test_no_valid_sham_controls_make_outcome_unresolved(sham_valid):
+    interventions = [_result("local", "restore", 0.86)]
+    if sham_valid is False:
+        interventions.append(
+            _result("local", "sham", 0.5, valid=False, reason="replay_drift")
+        )
+
+    report = _attribute(_pair("local"), interventions)
+
+    assert report.outcome == "unresolved"
+    assert report.origin_set == ["local"]
+    assert "SHAM_CONTROL_MISSING:local" in report.notes
+    assert "NO_SHAM_CONTROLS" in report.notes
+    assert report.roles["local"] != "origin_candidate"
+
+
+def test_sham_tolerance_boundary_is_a_violation():
+    report = _attribute(
+        _pair("local"),
+        [_result("local", "restore", 0.86), _result("local", "sham", 0.51)],
+    )
+
+    assert report.outcome == "sham_violation"
+    assert "SHAM_VIOLATION:local" in report.notes
+
+
+def test_overshoot_and_sham_adjusted_effect_are_reported():
+    report = _attribute(
+        _pair("local"),
+        [
+            _result("local", "restore", 1.0),
+            _result("local", "inject", 0.4),
+            _result("local", "sham", 0.5),
+        ],
+    )
+
+    assert report.stage_effects["local"]["nSRE"] == pytest.approx(1.25)
+    assert report.stage_effects["local"]["SAE"] == pytest.approx(0.5)
+    assert "OVERSHOOT:local" in report.notes
+
+
+def test_equal_score_prefers_bidirectional_evidence():
+    report = _attribute(
+        _pair("aggregation"),
+        [
+            _result("selection", "restore", 0.82),
+            _result("local", "restore", 0.82),
+            _result("local", "inject", 0.58),
+            _result("local", "sham", 0.5),
+        ],
+    )
+
+    assert report.origin_ranking[:2] == ["local", "selection"]
+
+
+def test_all_negligible_effects_do_not_fabricate_an_origin():
+    report = _attribute(
+        _pair("local"),
+        [_result("local", "restore", 0.52), _result("local", "sham", 0.5)],
+    )
+
+    assert report.outcome == "unresolved"
+    assert report.roles["local"] != "origin_candidate"
+
+
+def test_unresolved_report_suppresses_single_stage_counterfactual_and_verdict():
+    report = _attribute(
+        _pair("selection"),
+        [
+            _result("local", "restore", 0.82),
+            _result("compression", "inject", 0.58),
+            _result("local", "sham", 0.5),
+        ],
+    )
+    ground_truth = FailureSpecification(
+        stage="compression", type="test", active_rounds=(1, 1)
+    )
+
+    markdown = render_markdown(report, [], ground_truth=ground_truth)
+
+    assert "Restoring local closes" not in markdown
+    assert "unresolved among `local`, `compression`" in markdown
+    assert "Prediction matches injected stage: **unresolved**" in markdown

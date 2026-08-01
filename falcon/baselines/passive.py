@@ -4,7 +4,13 @@ Scores each intervenable stage from RECORDED states only — no replay, no
 interventions — and localizes the failure to the argmax stage. These are the
 rivals FALCON must beat in E1/E2, so scoring is implemented fairly: bounded
 deviations, exact client matching, deterministic tie-breaks.
+
+Non-finite recorded states (T8-F finding 6) propagate to a ``NaN`` stage
+score, and :func:`passive_localize` REFUSES to argmax over non-finite scores
+(Python's ``max`` would silently keep the first finite stage — a bias toward
+``selection``, not a measurement).
 """
+import math
 from pathlib import Path
 
 import numpy as np
@@ -42,11 +48,15 @@ def _relative_l2(a: np.ndarray, b: np.ndarray) -> float:
     zeros while the other is not). A bounded deviation keeps the metric
     consistent with the unmatched-client rule, which also contributes the
     maximum deviation 1.0. 0/0 (both vectors zero) is defined as 0.0.
+    Non-finite inputs yield NaN — recorded corruption must surface as an
+    unusable score, never as a plausible finite one.
     """
     denom = float(np.linalg.norm(a) + np.linalg.norm(b))
     if denom == 0.0:
         return 0.0
-    return float(np.linalg.norm(a - b) / denom)
+    # NaN is the intended result for non-finite inputs — not a runtime defect
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return float(np.linalg.norm(a - b) / denom)
 
 
 def _jaccard_distance(a: list[str], b: list[str]) -> float:
@@ -93,7 +103,9 @@ def passive_stage_scores(
       averaged.
 
     Returns a dict mapping every stage in :data:`INTERVENABLE_STAGES` to a
-    score in [0, 1]. A stage with no comparable data scores 0.0.
+    score in [0, 1]. A stage with no comparable data scores 0.0. A stage whose
+    deviations are non-finite (corrupted recording) scores ``NaN`` — it must
+    not be silently treated as either 0 or the maximum.
     """
     ref = Recorder(Path(ref_root), reference_run_id)
     fail = Recorder(Path(fail_root), failure_run_id)
@@ -125,7 +137,10 @@ def passive_stage_scores(
         aggregation_deviations.append(_relative_l2(agg_ref.aggregate, agg_fail.aggregate))
 
     def _mean(values: list[float]) -> float:
-        return float(np.mean(values)) if values else 0.0
+        if not values:
+            return 0.0
+        score = float(np.mean(values))
+        return score if math.isfinite(score) else float("nan")
 
     return {
         "selection": _mean(selection_distances),
@@ -138,10 +153,14 @@ def passive_stage_scores(
 def passive_localize(scores: dict[str, float]) -> str:
     """Argmax stage of ``passive_stage_scores`` output.
 
-    Deterministic tie-break: the earliest stage in STAGES order wins.
+    Deterministic tie-break: the earliest stage in STAGES order wins. Raises
+    ``ValueError`` on any non-finite score — argmax over NaN is not a
+    measurement, it is a silent bias toward the first stage (T8-F finding 6).
     """
     candidates = [s for s in INTERVENABLE_STAGES if s in scores]
     if not candidates:
         raise ValueError(f"no intervenable stage present in scores: {sorted(scores)}")
+    if any(not math.isfinite(scores[s]) for s in candidates):
+        raise ValueError("non-finite anomaly scores")
     # max() keeps the first maximal element, and candidates is in STAGES order.
     return max(candidates, key=lambda s: scores[s])

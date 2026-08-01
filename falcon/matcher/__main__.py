@@ -36,7 +36,7 @@ def main() -> int:
         args.json_path.write_text(
             report.model_dump_json(indent=2) + "\n", encoding="utf-8"
         )
-    return 0
+    return 1 if report.status == "INVALID_PAIR" else 0
 
 
 if __name__ == "__main__":

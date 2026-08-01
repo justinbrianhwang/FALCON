@@ -5,11 +5,10 @@ from __future__ import annotations
 import json
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
 
-import numpy as np
 from pydantic import ValidationError
 
+from falcon.recorder import Recorder, hash_model
 from falcon.schema import (
     STAGES,
     FailureSpecification,
@@ -31,8 +30,9 @@ def _load_metadata(run_dir: Path) -> RunMetadata | None:
         return None
 
 
-def _boundaries(run_dir: Path) -> set[tuple[int, str]]:
+def _boundaries(run_dir: Path) -> tuple[set[tuple[int, str]], bool]:
     result: set[tuple[int, str]] = set()
+    layout_valid = True
     for round_dir in run_dir.glob("round_*"):
         if not round_dir.is_dir():
             continue
@@ -42,53 +42,39 @@ def _boundaries(run_dir: Path) -> set[tuple[int, str]]:
             continue
         for stage in STAGES:
             base = round_dir / stage
-            if _sidecar(base, ".json").is_file() or base.is_dir():
+            json_path = _sidecar(base, ".json")
+            npz_path = _sidecar(base, ".npz")
+            if base.is_dir():
                 result.add((round_id, stage))
-    return result
-
-
-def _model_fingerprint(base: Path) -> tuple[int, str]:
-    data = json.loads(_sidecar(base, ".json").read_text(encoding="utf-8"))
-    index = data.get("__index__", 0)
-
-    digest = sha256(
-        json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    )
-    npz_path = _sidecar(base, ".npz")
-    if npz_path.exists():
-        with np.load(npz_path, allow_pickle=False) as archive:
-            for key in sorted(archive.files):
-                array = archive[key]
-                digest.update(key.encode("utf-8"))
-                digest.update(array.dtype.str.encode("ascii"))
-                digest.update(str(array.shape).encode("ascii"))
-                digest.update(array.tobytes(order="C"))
-    return index, digest.hexdigest()
-
-
-def _stage_fingerprint(run_dir: Path, boundary: tuple[int, str]) -> str:
-    round_id, stage = boundary
-    base = run_dir / f"round_{round_id}" / stage
-    if base.is_dir():
-        fingerprints = sorted(
-            _model_fingerprint(path.with_suffix(""))
-            for path in base.glob("*.json")
-        )
-        payload: Any = fingerprints
-    else:
-        payload = _model_fingerprint(base)
-    return sha256(
-        json.dumps(payload, separators=(",", ":")).encode("ascii")
-    ).hexdigest()
+                json_stems = {path.stem for path in base.glob("*.json")}
+                npz_stems = {path.stem for path in base.glob("*.npz")}
+                layout_valid &= not (json_path.exists() or npz_path.exists())
+                layout_valid &= npz_stems <= json_stems
+            elif json_path.is_file():
+                result.add((round_id, stage))
+            elif npz_path.exists():
+                layout_valid = False
+    return result, layout_valid
 
 
 def _stage_hashes(
     run_dir: Path, boundaries: set[tuple[int, str]]
 ) -> dict[tuple[int, str], str]:
-    return {
-        boundary: _stage_fingerprint(run_dir, boundary)
-        for boundary in boundaries
-    }
+    recorder = Recorder.__new__(Recorder)
+    recorder.run_id = run_dir.name
+    recorder.run_dir = run_dir
+
+    hashes: dict[tuple[int, str], str] = {}
+    for boundary in boundaries:
+        state = recorder.load(*boundary)
+        if isinstance(state, list):
+            payload = [hash_model(model) for model in state]
+            hashes[boundary] = sha256(
+                json.dumps(payload, separators=(",", ":")).encode("ascii")
+            ).hexdigest()
+        else:
+            hashes[boundary] = hash_model(state)
+    return hashes
 
 
 def _failure_only_delta(
@@ -144,6 +130,7 @@ def validate_pair(
         "same_seed": False,
         "same_rounds": False,
         "same_dataset_config": False,
+        "same_code_version": False,
         "config_delta_is_failure_only": False,
         "stage_hash_coverage": False,
         "pre_failure_hashes_match": False,
@@ -154,6 +141,9 @@ def validate_pair(
         assert reference is not None and failure is not None
         checks["same_seed"] = reference.seed == failure.seed
         checks["same_rounds"] = reference.rounds == failure.rounds
+        checks["same_code_version"] = (
+            reference.code_version == failure.code_version
+        )
         checks["same_dataset_config"] = (
             "dataset" in reference.config
             and "dataset" in failure.config
@@ -163,9 +153,13 @@ def validate_pair(
             reference, failure
         )
 
-    reference_boundaries = _boundaries(reference_dir)
-    failure_boundaries = _boundaries(failure_dir)
-    checks["stage_hash_coverage"] = reference_boundaries == failure_boundaries
+    reference_boundaries, reference_layout_valid = _boundaries(reference_dir)
+    failure_boundaries, failure_layout_valid = _boundaries(failure_dir)
+    checks["stage_hash_coverage"] = (
+        reference_layout_valid
+        and failure_layout_valid
+        and reference_boundaries == failure_boundaries
+    )
 
     reference_hashes: dict[tuple[int, str], str] = {}
     failure_hashes: dict[tuple[int, str], str] = {}
@@ -173,10 +167,11 @@ def validate_pair(
     try:
         reference_hashes = _stage_hashes(reference_dir, reference_boundaries)
         failure_hashes = _stage_hashes(failure_dir, failure_boundaries)
-    except (OSError, ValueError, KeyError, TypeError):
+    except Exception:
         hashes_loadable = False
 
     failure_spec = failure.failure if failure is not None else None
+    pre_failure: set[tuple[int, str]] = set()
     if hashes_loadable and failure_spec is not None:
         start_round = failure_spec.active_rounds[0]
         pre_failure = {
@@ -209,6 +204,12 @@ def validate_pair(
     first_round, first_stage = divergent[0] if divergent else (None, None)
 
     warnings: list[str] = []
+    if metadata_loadable and not checks["same_code_version"]:
+        warnings.append("code versions differ - causal comparison may be unreliable")
+    if hashes_loadable and failure_spec is not None and not pre_failure:
+        warnings.append(
+            "no pre-failure boundaries recorded - match rests on config/seed only"
+        )
     if hashes_loadable and checks["stage_hash_coverage"] and not divergent:
         warnings.append("runs are identical - no failure effect recorded")
     if (
@@ -220,8 +221,26 @@ def validate_pair(
             f"first divergence stage {first_stage!r} differs from configured "
             f"failure stage {failure_spec.stage!r} in round {first_round}"
         )
+    if (
+        first_round is not None
+        and failure_spec is not None
+        and not (
+            failure_spec.active_rounds[0]
+            <= first_round
+            <= failure_spec.active_rounds[1]
+        )
+    ):
+        warnings.append(
+            f"first divergence round {first_round} falls outside configured "
+            f"failure window {failure_spec.active_rounds}"
+        )
 
-    if not all(checks.values()):
+    fatal_checks = {
+        name: passed
+        for name, passed in checks.items()
+        if name != "same_code_version"
+    }
+    if not all(fatal_checks.values()):
         status = "INVALID_PAIR"
     elif warnings:
         status = "MATCHED_WITH_WARNINGS"

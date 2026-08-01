@@ -14,9 +14,11 @@ class Rng:
     """Create independent, order-independent random streams from one seed.
 
     Standard names are ``global_init``, ``client_selection``,
-    ``client.<id>.dataloader``, ``client.<id>.optimizer``,
+    ``client.<id>.round.<t>.dataloader``, ``client.<id>.round.<t>.optimizer``,
     ``compression.<id>``, ``aggregation``, and ``evaluation``. Failure
-    injectors use their own ``failure.<stage>`` stream.
+    injectors use their own ``failure.<stage>`` stream. Per-client streams are
+    keyed by (client, round) so a client's draws are independent of its
+    participation history (CONTRACTS v0.2).
     """
 
     def __init__(self, root_seed: int):

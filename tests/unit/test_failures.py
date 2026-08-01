@@ -206,6 +206,12 @@ def test_exclusion_rejects_bad_probability(partition):
         _selection_injector(partition, p=1.5)
 
 
+def test_exclusion_rejects_non_finite_probability(partition):
+    for bad in (float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="exclusion_probability"):
+            _selection_injector(partition, p=bad)
+
+
 # --- L1: local / lr_misconfig ------------------------------------------------
 
 
@@ -281,6 +287,20 @@ def test_lr_requires_exactly_one_selector(partition):
         )
     with pytest.raises(ValueError, match="not in partition"):
         _lr_injector(partition, affected_clients=["ghost"])
+
+
+def test_lr_rejects_non_finite_multiplier(partition):
+    """T8-F finding 6: a NaN/inf multiplier would poison every stage state."""
+    for bad in (float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="lr_multiplier"):
+            _lr_injector(partition, lr_multiplier=bad)
+
+
+def test_lr_rejects_non_finite_fraction(partition):
+    with pytest.raises(ValueError, match="fraction"):
+        _lr_injector(partition, affected_clients=None, fraction=float("nan"))
+    with pytest.raises(ValueError, match="fraction"):
+        _lr_injector(partition, affected_clients=None, fraction=float("inf"))
 
 
 # --- C1: compression / aggressive_topk (+ stages.compress topk) --------------
@@ -442,6 +462,22 @@ def test_weights_corrupted_mode_log_uniform_factors(partition):
     # deterministic for the same spec+seed
     again = _weights_injector(partition, "corrupted").weights(weights, 1)
     assert out == again
+
+
+#: exact ``100 * 10 ** uniform(-1, 1)`` weights drawn from stream
+#: ``failure.aggregation`` of ``Rng(13)`` in sorted-id order (finding 8: pin
+#: the exact draw, not only range + repeatability)
+_PINNED_CORRUPTED_WEIGHTS = {
+    "client_0": 32.78828069651116,
+    "client_1": 47.89096442259545,
+    "client_2": 21.764116313365502,
+}
+
+
+def test_weights_corrupted_mode_pins_exact_rng_draws(partition):
+    weights = {"client_0": 100.0, "client_1": 100.0, "client_2": 100.0}
+    out = _weights_injector(partition, "corrupted").weights(weights, 1)
+    assert out == _PINNED_CORRUPTED_WEIGHTS
 
 
 def test_weights_corrupted_uses_only_failure_aggregation_stream(partition):

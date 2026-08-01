@@ -1,4 +1,6 @@
 """Unit tests for the passive/terminal baselines (Task T8, Plan §19.1-19.2)."""
+import math
+
 import numpy as np
 import pytest
 
@@ -198,6 +200,39 @@ def test_zero_norm_update_guard(tmp_path):
     assert mixed["local"] == pytest.approx(1.0)
 
 
+# --- non-finite inputs (T8-F finding 6): NaN must surface, never be argmaxed ---
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_relative_l2_non_finite_returns_nan(bad):
+    from falcon.baselines.passive import _relative_l2
+
+    assert math.isnan(_relative_l2(np.array([bad, 1.0]), np.array([1.0, 0.0])))
+    assert math.isnan(_relative_l2(np.array([1.0, 0.0]), np.array([bad, 1.0])))
+
+
+def test_non_finite_recorded_state_scores_nan_and_localize_refuses(tmp_path):
+    """A corrupted recording yields a NaN stage score; localize must raise —
+    the pre-fix code silently localized such failures to ``selection``."""
+
+    def nan_fail(states, r):
+        states["local"] = _local(r, updates={"c1": [float("nan"), 0.0, 1.0]})
+
+    scores = _record_pair(tmp_path, nan_fail, rounds=1)
+    assert math.isnan(scores["local"])
+    assert scores["selection"] == 0.0
+    with pytest.raises(ValueError, match="non-finite anomaly scores"):
+        passive_localize(scores)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_localize_rejects_non_finite_scores(bad):
+    scores = {s: 0.1 for s in INTERVENABLE_STAGES}
+    scores["compression"] = bad
+    with pytest.raises(ValueError, match="non-finite anomaly scores"):
+        passive_localize(scores)
+
+
 def test_integration_aggressive_topk_localizes_to_compression(tmp_path):
     """Reference vs T4 aggressive_topk failure run -> compression wins (easy case)."""
     base = dict(
@@ -321,3 +356,18 @@ def test_centroid_classifier_input_validation():
         clf.fit([], [])
     with pytest.raises(ValueError):
         clf.fit([np.zeros(2)], ["local", "compression"])
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_centroid_classifier_rejects_non_finite(bad):
+    """T8-F finding 6: argmin over NaN distances silently picks class 0."""
+    clf = NearestCentroidStageClassifier().fit(
+        [np.array([0.0, 0.0]), np.array([1.0, 1.0]), np.array([5.0, 5.0]), np.array([6.0, 6.0])],
+        ["local", "local", "aggregation", "aggregation"],
+    )
+    with pytest.raises(ValueError, match="non-finite"):
+        clf.predict(np.array([bad, 1.0]))
+    with pytest.raises(ValueError, match="non-finite"):
+        NearestCentroidStageClassifier().fit(
+            [np.array([bad, 0.0]), np.array([1.0, 1.0])], ["local", "aggregation"]
+        )

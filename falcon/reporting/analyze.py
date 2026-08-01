@@ -40,6 +40,8 @@ def analyze_pair(
     min_gap: float,
     sham_tolerance: float,
     rounds: list[int] | None = None,
+    epsilon_tie: float = 1e-9,
+    decisive_margin: float = 0.05,
 ) -> tuple[AttributionReport, list[InterventionResult]]:
     """Validate, intervene on, and attribute a recorded matched run pair."""
     runs_root = Path(runs_root)
@@ -51,55 +53,127 @@ def analyze_pair(
         return (
             AttributionReport(
                 pair=pair,
+                outcome="invalid_pair",
                 failure_gap={},
                 stage_effects={},
                 origin_ranking=[],
+                origin_set=[],
                 roles={},
                 notes=["INVALID_PAIR"],
             ),
             [],
         )
 
-    reference = _metadata(runs_root, reference_run_id)
-    failure = _metadata(runs_root, failure_run_id)
+    try:
+        reference = _metadata(runs_root, reference_run_id)
+        failure = _metadata(runs_root, failure_run_id)
+    except Exception as exc:
+        return (
+            AttributionReport(
+                pair=pair,
+                outcome="unresolved",
+                failure_gap={},
+                stage_effects={},
+                origin_ranking=[],
+                origin_set=[],
+                roles={},
+                notes=[f"INVALID_METADATA:{type(exc).__name__}"],
+            ),
+            [],
+        )
     if rounds is None:
         chosen_round = pair.first_divergence_round
         if chosen_round is None:
             if failure.failure is None:
-                raise ValueError("matched failure run has no failure specification")
+                return (
+                    AttributionReport(
+                        pair=pair,
+                        outcome="unresolved",
+                        failure_gap={},
+                        stage_effects={},
+                        origin_ranking=[],
+                        origin_set=[],
+                        roles={},
+                        notes=["MISSING_FAILURE_SPECIFICATION"],
+                    ),
+                    [],
+                )
             chosen_round = failure.failure.active_rounds[0]
         rounds = [chosen_round]
 
-    interventions = [
-        apply_intervention(
-            InterventionSpecification(
-                target_run_id=(reference_run_id if mode == "inject" else failure_run_id),
-                source_run_id=(failure_run_id if mode == "inject" else reference_run_id),
-                round_id=round_id,
-                stage=stage,
-                mode=mode,
-            ),
-            runs_root,
+    try:
+        reference_outcome = Recorder(runs_root, reference_run_id).load(
+            reference.rounds - 1, "evaluation"
         )
-        for round_id in rounds
-        for stage in _INTERVENABLE_STAGES
-        for mode in ("restore", "inject", "sham")
-    ]
+        failure_outcome = Recorder(runs_root, failure_run_id).load(
+            failure.rounds - 1, "evaluation"
+        )
+        m_ref = reference_outcome.metrics[metric]
+        m_fail = failure_outcome.metrics[metric]
+    except KeyError:
+        return (
+            AttributionReport(
+                pair=pair,
+                outcome="unresolved",
+                failure_gap={},
+                stage_effects={},
+                origin_ranking=[],
+                origin_set=[],
+                roles={},
+                notes=[f"MISSING_METRIC:{metric}"],
+            ),
+            [],
+        )
+    except Exception as exc:
+        return (
+            AttributionReport(
+                pair=pair,
+                outcome="unresolved",
+                failure_gap={},
+                stage_effects={},
+                origin_ranking=[],
+                origin_set=[],
+                roles={},
+                notes=[f"INVALID_EVALUATION:{type(exc).__name__}"],
+            ),
+            [],
+        )
 
-    reference_outcome = Recorder(runs_root, reference_run_id).load(
-        reference.rounds - 1, "evaluation"
-    )
-    failure_outcome = Recorder(runs_root, failure_run_id).load(
-        failure.rounds - 1, "evaluation"
-    )
+    interventions: list[InterventionResult] = []
+    for round_id in rounds:
+        for stage in _INTERVENABLE_STAGES:
+            for mode in ("restore", "inject", "sham"):
+                spec = InterventionSpecification(
+                    target_run_id=(
+                        reference_run_id if mode == "inject" else failure_run_id
+                    ),
+                    source_run_id=(
+                        failure_run_id if mode == "inject" else reference_run_id
+                    ),
+                    round_id=round_id,
+                    stage=stage,
+                    mode=mode,
+                )
+                try:
+                    result = apply_intervention(spec, runs_root)
+                except Exception as exc:
+                    result = InterventionResult(
+                        spec=spec,
+                        valid=False,
+                        reason=f"{type(exc).__name__}: {exc}",
+                    )
+                interventions.append(result)
+
     report = attribute(
         pair,
         interventions,
         metric=metric,
-        m_ref=reference_outcome.metrics[metric],
-        m_fail=failure_outcome.metrics[metric],
+        m_ref=m_ref,
+        m_fail=m_fail,
         higher_is_better=higher_is_better,
         min_gap=min_gap,
         sham_tolerance=sham_tolerance,
+        epsilon_tie=epsilon_tie,
+        decisive_margin=decisive_margin,
     )
     return report, interventions

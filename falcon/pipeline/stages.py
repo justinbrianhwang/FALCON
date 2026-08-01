@@ -75,11 +75,19 @@ def init_params(num_features: int, num_classes: int, rng) -> np.ndarray:
 def select_clients(
     pool: list[str], round_id: int, cfg: SelectionConfig, rng: "Rng"
 ) -> SelectionState:
-    """Uniform sampling without replacement, stream ``client_selection``."""
+    """Uniform sampling without replacement, stream ``client_selection``.
+
+    Undersubscription is allowed (T4-F finding 7): when the candidate pool is
+    smaller than ``cfg.clients_per_round`` — e.g. a selection failure excluded
+    most clients — the round selects the whole pool instead of crashing, and
+    the recorded state shows the shortfall (``len(selected_ids) <
+    clients_per_round``, inclusion probability 1.0).
+    """
     gen = rng.stream("client_selection")
-    idx = gen.choice(len(pool), size=cfg.clients_per_round, replace=False)
+    n_select = min(cfg.clients_per_round, len(pool))
+    idx = gen.choice(len(pool), size=n_select, replace=False)
     selected = sorted(pool[int(i)] for i in idx)
-    inclusion_prob = cfg.clients_per_round / len(pool)
+    inclusion_prob = n_select / len(pool) if pool else 0.0
     return SelectionState(
         round_id=round_id,
         candidate_ids=list(pool),
@@ -99,10 +107,13 @@ def local_train(
 ) -> ClientLocalState:
     """Plain minibatch SGD on softmax cross-entropy.
 
-    Minibatches are drawn from stream ``client.<id>.dataloader``. The returned
+    Minibatches are drawn from stream ``client.<id>.round.<t>.dataloader``
+    (CONTRACTS §3 v0.2): keying the stream by (client, round) makes a client's
+    round-t draws independent of which rounds it participated in earlier, so a
+    selection intervention cannot advance or freeze its stream. The returned
     ``update`` is the delta ``trained - global``, NOT the trained params.
     """
-    gen = rng.stream(f"client.{client_id}.dataloader")
+    gen = rng.stream(f"client.{client_id}.round.{round_id}.dataloader")
     params = model_params.astype(np.float64, copy=True)
     n = data.x.shape[0]
     batch_size = min(cfg.batch_size, n)
@@ -120,7 +131,9 @@ def local_train(
         num_examples=n,
         num_steps=cfg.local_steps,
         loss_history=loss_history,
-        rng_state={f"client.{client_id}.dataloader": gen.bit_generator.state},
+        rng_state={
+            f"client.{client_id}.round.{round_id}.dataloader": gen.bit_generator.state
+        },
     )
 
 

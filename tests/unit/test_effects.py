@@ -58,6 +58,10 @@ def test_normalized_effects_refuse_too_small_a_gap():
     assert nsie(0.5 + 1e-10, 0.5, 0.5) is None
     assert nsre(0.51, 0.51, 0.5, min_gap=0.02) is None
     assert nsie(0.51, 0.5, 0.5, min_gap=0.02) is None
+    assert nsre(0.8, 0.5, 0.9) is None
+    assert nsie(0.5, 0.7, 0.9) is None
+    assert nsre(0.8, float("nan"), 0.5) is None
+    assert nsie(float("nan"), 0.7, 0.5) is None
 
 
 def test_bidirectional_intervention_score():
@@ -65,6 +69,7 @@ def test_bidirectional_intervention_score():
     assert bis(0.8, 0.6, lam=0.25) == pytest.approx(0.65)
     assert bis(None, 0.6) is None
     assert bis(0.8, None) is None
+    assert bis(0.6, 0.8) == pytest.approx(0.6)
 
 
 def test_sham_adjusted_effect():

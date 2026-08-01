@@ -90,6 +90,17 @@ def test_select_clients_deterministic_and_uniform():
     assert a.round_id == 0 and a.candidate_ids == pool
 
 
+def test_select_clients_undersubscribed_pool_selects_whole_pool():
+    """T4-F finding 7: pool < clients_per_round selects the pool, no crash."""
+    pool = ["client_0", "client_1"]
+    cfg = SelectionConfig(clients_per_round=5)
+    state = select_clients(pool, 0, cfg, StubRng(7))
+    assert state.selected_ids == pool
+    assert len(state.selected_ids) < cfg.clients_per_round  # recorded shortfall
+    assert state.sampling_probs == {cid: pytest.approx(1.0) for cid in pool}
+    assert state.candidate_ids == pool
+
+
 def test_local_train_deterministic(client_data, params):
     cfg = LocalConfig(lr=0.5, local_steps=6, batch_size=8)
     a = local_train(params, "client_0", client_data, 0, cfg, StubRng(11))
@@ -203,10 +214,10 @@ def test_select_clients_requests_only_client_selection_stream():
 
 
 def test_local_train_requests_only_client_dataloader_stream(client_data, params):
-    spy = SpyRng(11, allowed={"client.client_0.dataloader"})
+    spy = SpyRng(11, allowed={"client.client_0.round.0.dataloader"})
     cfg = LocalConfig(lr=0.5, local_steps=3, batch_size=8)
     local_train(params, "client_0", client_data, 0, cfg, spy)
-    assert spy.requested == ["client.client_0.dataloader"]
+    assert spy.requested == ["client.client_0.round.0.dataloader"]
 
 
 def test_select_clients_unaffected_by_unrelated_streams():
@@ -216,7 +227,7 @@ def test_select_clients_unaffected_by_unrelated_streams():
     rng = Rng(7)
     rng.stream("global_init").normal(size=8)
     rng.stream("aggregation").integers(0, 100, size=3)
-    rng.stream("client.client_0.dataloader").random(5)
+    rng.stream("client.client_0.round.0.dataloader").random(5)
     disturbed = select_clients(pool, 0, cfg, rng)
     assert fresh.selected_ids == disturbed.selected_ids
 
@@ -236,7 +247,7 @@ def test_local_train_unaffected_by_unrelated_streams(client_data, params):
     fresh = local_train(params, "client_0", client_data, 0, cfg, Rng(11))
     rng = Rng(11)
     rng.stream("global_init").normal(size=8)
-    rng.stream("client.client_1.dataloader").integers(0, 10, size=4)
+    rng.stream("client.client_1.round.0.dataloader").integers(0, 10, size=4)
     disturbed = local_train(params, "client_0", client_data, 0, cfg, rng)
     np.testing.assert_array_equal(fresh.update, disturbed.update)
 
@@ -245,7 +256,7 @@ def test_local_train_changes_when_dataloader_stream_preconsumed(client_data, par
     cfg = LocalConfig(lr=0.5, local_steps=4, batch_size=8)
     fresh = local_train(params, "client_0", client_data, 0, cfg, Rng(11))
     rng = Rng(11)
-    rng.stream("client.client_0.dataloader").integers(0, 10)
+    rng.stream("client.client_0.round.0.dataloader").integers(0, 10)
     disturbed = local_train(params, "client_0", client_data, 0, cfg, rng)
     assert not np.array_equal(fresh.update, disturbed.update)
 
@@ -272,10 +283,10 @@ def test_local_train_snapshots_consumed_stream_state(client_data, params):
     rng = Rng(11)
     cfg = LocalConfig(lr=0.5, local_steps=3, batch_size=8)
     state = local_train(params, "client_0", client_data, 0, cfg, rng)
-    assert set(state.rng_state) == {"client.client_0.dataloader"}
+    assert set(state.rng_state) == {"client.client_0.round.0.dataloader"}
     assert json.loads(json.dumps(state.rng_state)) == state.rng_state
-    snapshot = copy.deepcopy(state.rng_state["client.client_0.dataloader"])
-    expected = rng.stream("client.client_0.dataloader").integers(0, 2**32, size=8)
+    snapshot = copy.deepcopy(state.rng_state["client.client_0.round.0.dataloader"])
+    expected = rng.stream("client.client_0.round.0.dataloader").integers(0, 2**32, size=8)
     restored = np.random.default_rng(0)
     restored.bit_generator.state = snapshot
     np.testing.assert_array_equal(restored.integers(0, 2**32, size=8), expected)

@@ -22,13 +22,22 @@ measurably worse — chosen severities (documented per case below):
 import copy
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
 from falcon.pipeline.runner import run
 from falcon.recorder.recorder import Recorder
 from falcon.replay.rng import Rng
-from falcon.schema import RunConfig
+from falcon.schema import (
+    AggregationConfig,
+    CompressionConfig,
+    DatasetConfig,
+    FailureSpecification,
+    LocalConfig,
+    RunConfig,
+    SelectionConfig,
+)
 
 CASES_DIR = Path(__file__).resolve().parents[2] / "configs" / "cases"
 STAGE_ORDER = ("selection", "local", "compression", "aggregation", "evaluation")
@@ -127,3 +136,55 @@ def test_reference_run_of_each_case_is_deterministic(tmp_path):
         hashes_a, _ = _run_recorded(reference_cfg, tmp_path, f"det-a-{filename}")
         hashes_b, _ = _run_recorded(reference_cfg, tmp_path, f"det-b-{filename}")
         assert hashes_a == hashes_b
+
+
+def test_exclusion_undersubscribed_round_completes_and_is_recorded(tmp_path):
+    """T4-F finding 7: exclusion may shrink the pool below clients_per_round.
+
+    8 of 10 clients are minority-heavy; p=1.0 exclusion on rounds 1-2 leaves a
+    2-client pool against clients_per_round=5. The run must complete (no
+    sampling crash) and the recorded rounds must show the shortfall.
+    """
+    cfg = RunConfig(
+        run_id="undersubscribed",
+        seed=42,
+        rounds=3,
+        dataset=DatasetConfig(
+            num_clients=10,
+            num_features=10,
+            num_classes=2,
+            samples_per_client=100,
+            minority_class=1,
+            minority_client_fraction=0.8,
+        ),
+        selection=SelectionConfig(clients_per_round=5),
+        local=LocalConfig(lr=0.1, local_steps=3, batch_size=32),
+        compression=CompressionConfig(kind="identity"),
+        aggregation=AggregationConfig(rule="weighted_mean"),
+        failure=FailureSpecification(
+            stage="selection",
+            type="minority_exclusion",
+            active_rounds=(1, 2),
+            severity=1,
+            parameters={"target_class": 1, "exclusion_probability": 1.0},
+        ),
+    )
+    recorder = Recorder(tmp_path, "undersubscribed")
+    outcomes = run(cfg, recorder=recorder, rng=Rng(cfg.seed))
+
+    assert len(outcomes) == cfg.rounds  # the run completed
+    assert all(np.isfinite(o.metrics["loss"]) for o in outcomes)
+    # round 0 is outside the window: full 5-client selection
+    assert len(recorder.load(0, "selection").selected_ids) == 5
+    # active rounds: 8 of 10 clients excluded -> undersubscribed 2-client rounds
+    for round_id in (1, 2):
+        selection = recorder.load(round_id, "selection")
+        assert len(selection.candidate_ids) == 2
+        assert selection.selected_ids == selection.candidate_ids
+        assert len(selection.selected_ids) < cfg.selection.clients_per_round
+        assert selection.sampling_probs == {
+            cid: pytest.approx(1.0) for cid in selection.candidate_ids
+        }
+        # downstream stages ran with exactly the undersubscribed clients
+        local_states = recorder.load(round_id, "local")
+        assert [s.client_id for s in local_states] == selection.selected_ids

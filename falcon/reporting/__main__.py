@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.set_defaults(higher_is_better=True)
     parser.add_argument("--min-gap", type=float, default=0.005)
     parser.add_argument("--sham-tolerance", type=float, default=1e-9)
+    parser.add_argument("--decisive-margin", type=float, default=0.05)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--json", type=Path, dest="json_path")
     args = parser.parse_args(argv)
@@ -37,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         higher_is_better=args.higher_is_better,
         min_gap=args.min_gap,
         sham_tolerance=args.sham_tolerance,
+        decisive_margin=args.decisive_margin,
     )
     ground_truth = (
         load_ground_truth(args.runs_root, args.failure)

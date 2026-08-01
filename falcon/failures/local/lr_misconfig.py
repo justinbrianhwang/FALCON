@@ -1,6 +1,8 @@
 """L1 — local-training failure: a subset of clients trains with a wrong learning rate."""
 from __future__ import annotations
 
+import math
+
 from ..base import FailureInjector
 
 
@@ -13,7 +15,8 @@ class LrMisconfigInjector(FailureInjector):
         stream ``failure.local``: ``max(1, round(fraction * K))`` ids drawn
         without replacement, sorted);
       - ``lr_multiplier``: applied as ``lr * multiplier`` (e.g. 10.0, 0.01;
-        negative allowed as a sanity case).
+        negative allowed as a sanity case). Must be finite — a NaN/inf
+        multiplier would silently poison every downstream stage state.
     """
 
     stage = "local"
@@ -22,6 +25,8 @@ class LrMisconfigInjector(FailureInjector):
         super().__init__(spec, partition, rng)
         params = spec.parameters
         self._multiplier = float(params["lr_multiplier"])
+        if not math.isfinite(self._multiplier):
+            raise ValueError(f"lr_multiplier must be finite, got {self._multiplier}")
         explicit = params.get("affected_clients")
         fraction = params.get("fraction")
         if (explicit is None) == (fraction is None):

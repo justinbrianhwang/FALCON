@@ -1,7 +1,9 @@
 import json
+import sys
 
 import numpy as np
 
+from falcon.matcher.__main__ import main as matcher_main
 from falcon.matcher.matcher import validate_pair
 from falcon.recorder import Recorder
 from falcon.schema import (
@@ -112,6 +114,11 @@ def _rewrite_metadata(run_dir, update):
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def _set_failure_window(data, start, end):
+    data["failure"]["active_rounds"] = [start, end]
+    data["config"]["failure"]["active_rounds"] = [start, end]
+
+
 def test_matched_pair(tmp_path):
     reference, failure = _make_pair(tmp_path)
 
@@ -145,6 +152,32 @@ def test_extra_config_difference_is_invalid(tmp_path):
     assert not report.checks["config_delta_is_failure_only"]
 
 
+def test_failure_config_must_match_failure_metadata(tmp_path):
+    reference, failure = _make_pair(tmp_path)
+    _rewrite_metadata(
+        failure,
+        lambda data: data["failure"]["parameters"].update(extra=True),
+    )
+
+    report = validate_pair(reference, failure)
+
+    assert report.status == "INVALID_PAIR"
+    assert not report.checks["config_delta_is_failure_only"]
+
+
+def test_reference_run_must_not_carry_failure_metadata(tmp_path):
+    reference, failure = _make_pair(tmp_path)
+    _rewrite_metadata(
+        reference,
+        lambda data: data.update(failure=_failure().model_dump(mode="json")),
+    )
+
+    report = validate_pair(reference, failure)
+
+    assert report.status == "INVALID_PAIR"
+    assert not report.checks["config_delta_is_failure_only"]
+
+
 def test_pre_failure_hash_mismatch_is_invalid(tmp_path):
     reference, failure = _make_pair(tmp_path)
     outcome = Recorder(tmp_path, "failure").load(0, "evaluation")
@@ -170,3 +203,87 @@ def test_identical_runs_warn(tmp_path):
     assert report.first_divergence_round is None
     assert report.first_divergence_stage is None
     assert report.warnings == ["runs are identical - no failure effect recorded"]
+
+
+def test_orphan_npz_sidecars_fail_closed(tmp_path):
+    reference, failure = _make_pair(tmp_path)
+    for run_dir in (reference, failure):
+        (run_dir / "round_0" / "aggregation.json").unlink()
+
+    report = validate_pair(reference, failure)
+
+    assert report.status == "INVALID_PAIR"
+    assert not report.checks["stage_hash_coverage"]
+
+
+def test_missing_npz_for_array_state_fails_closed(tmp_path):
+    reference, failure = _make_pair(tmp_path)
+    (failure / "round_0" / "aggregation.npz").unlink()
+
+    report = validate_pair(reference, failure)
+
+    assert report.status == "INVALID_PAIR"
+
+
+def test_truncated_npz_fails_closed(tmp_path):
+    reference, failure = _make_pair(tmp_path)
+    path = failure / "round_0" / "aggregation.npz"
+    payload = path.read_bytes()
+    path.write_bytes(payload[: len(payload) // 2])
+
+    report = validate_pair(reference, failure)
+
+    assert report.status == "INVALID_PAIR"
+
+
+def test_code_version_mismatch_is_a_warning(tmp_path):
+    reference, failure = _make_pair(tmp_path)
+    _rewrite_metadata(reference, lambda data: data.update(code_version="git:aaa"))
+    _rewrite_metadata(failure, lambda data: data.update(code_version="git:bbb"))
+
+    report = validate_pair(reference, failure)
+
+    assert report.status == "MATCHED_WITH_WARNINGS"
+    assert not report.checks["same_code_version"]
+    assert any("code versions differ" in warning for warning in report.warnings)
+
+
+def test_round_zero_failure_warns_that_no_pre_failure_boundaries_exist(tmp_path):
+    reference, failure = _make_pair(tmp_path)
+    _rewrite_metadata(failure, lambda data: _set_failure_window(data, 0, 1))
+    local = Recorder(tmp_path, "failure").load(0, "local")
+    local[0].update[0] += 1.0
+    Recorder(tmp_path, "failure").record(0, "local", local)
+
+    report = validate_pair(reference, failure)
+
+    assert report.status == "MATCHED_WITH_WARNINGS"
+    assert any("no pre-failure boundaries" in warning for warning in report.warnings)
+
+
+def test_first_divergence_outside_active_window_warns(tmp_path):
+    reference, failure = _make_pair(tmp_path)
+    _rewrite_metadata(failure, lambda data: _set_failure_window(data, 0, 0))
+
+    report = validate_pair(reference, failure)
+
+    assert report.status == "MATCHED_WITH_WARNINGS"
+    assert any("outside configured failure window" in warning for warning in report.warnings)
+
+
+def test_matcher_cli_returns_one_for_invalid_pair(tmp_path, monkeypatch):
+    reference, failure = _make_pair(tmp_path)
+    _rewrite_metadata(failure, lambda data: data.update(seed=8))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "falcon.matcher",
+            "--reference",
+            str(reference),
+            "--failure",
+            str(failure),
+        ],
+    )
+
+    assert matcher_main() == 1

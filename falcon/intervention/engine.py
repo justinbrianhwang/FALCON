@@ -5,6 +5,20 @@ overlay — re-run ``run(cfg)`` from round 0 and, at the intervention boundary,
 swap the produced stage state for the recorded source state, then continue
 downstream. No checkpoint restoration.
 
+Sham design (T5-F finding 2): a sham is evidence about the intervention
+machinery, not a repair tool. It (a) runs a NO-overlay replay of the target
+and requires every recorded boundary hash to match — any drift invalidates
+the sham (``replay_drift:<round>/<stage>``); (b) overlays the LIVE boundary
+state after a Recorder save/load round-trip (a pure serialization test),
+never the recorded target state, which could silently erase drift; and
+(c) for the evaluation stage compares the RECOMPUTED outcome against the
+recording, since comparing the self-replaced outcome is tautological.
+
+Cross-run gates (T5-F findings 3–4): restore/inject require matched run
+metadata (same seed, equal dataset config, config delta limited to
+``failure``) and matching lineage hashes at the replaced boundary —
+violations are ``valid=False``, never warnings.
+
 ``runs_root`` is the recorder root directory: recorded runs live at
 ``runs_root/runs/<run_id>/`` (``metadata.json`` + per-round stage files), the
 same layout ``falcon.recorder.recorder.Recorder(root_dir, run_id)`` writes.
@@ -12,6 +26,7 @@ same layout ``falcon.recorder.recorder.Recorder(root_dir, run_id)`` writes.
 from __future__ import annotations
 
 import tempfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -21,22 +36,34 @@ from falcon.pipeline.runner import run
 from falcon.recorder.recorder import Recorder
 from falcon.replay.rng import Rng
 from falcon.schema import (
+    STAGES,
+    AggregationState,
+    ClientLocalState,
+    CompressionState,
     InterventionResult,
     InterventionSpecification,
+    OutcomeState,
     RunConfig,
     RunMetadata,
+    SelectionState,
 )
 
 #: per-client stages recorded once per stage as a list (CONTRACTS §1)
 _LIST_STAGES = ("local", "compression")
 #: lineage hash field per list stage, checked against the live replay
 _LINEAGE_FIELD = {"local": "base_model_hash", "compression": "uncompressed_hash"}
-#: array field per stage, shape-checked against the live computed state
+#: array field per stage, checked against the live computed state
 _ARRAY_FIELD = {"local": "update", "compression": "update", "aggregation": "aggregate"}
-
-#: outcome_metrics key set (to 1.0) when the replaced entries' lineage hashes
-#: do not match the live replay's — a WARNING, never fatal (Plan §13)
-WARNING_BASE_MODEL_MISMATCH = "warning_base_model_mismatch"
+#: pydantic type a recorded boundary must load as, per stage
+_EXPECTED_STATE_TYPE = {
+    "selection": SelectionState,
+    "local": ClientLocalState,
+    "compression": CompressionState,
+    "aggregation": AggregationState,
+    "evaluation": OutcomeState,
+}
+#: recorder/serialization failures translated into ``valid=False`` reasons
+_LOAD_ERRORS = (ValueError, TypeError, OSError, EOFError, zipfile.BadZipFile)
 
 
 class _InvalidIntervention(Exception):
@@ -52,9 +79,12 @@ class _ReplacementOverlay:
     """Runner overlay swapping one boundary state for a recorded replacement.
 
     Validation that needs the live computed state happens here, at the
-    boundary: array shapes (vs the live state), client identity, scoped
-    client_ids presence in BOTH live and source, and the lineage-hash check
-    (recorded as a warning flag, replacement still proceeds).
+    boundary: array shape/dtype/finiteness (vs the live state), client
+    identity, scoped client_ids presence in BOTH live and source, and the
+    lineage-hash check. A lineage mismatch means the replacement descends
+    from a different base model — transplanting its delta is not a
+    restoration of the reference stage state, so it is REJECTED with
+    ``lineage_mismatch`` (T5-F finding 3), never downgraded to a warning.
     """
 
     def __init__(
@@ -68,11 +98,12 @@ class _ReplacementOverlay:
         self._stage = stage
         self._replacement = replacement
         self._client_ids = client_ids  # None => whole-stage replacement
-        self.base_model_mismatch = False
+        self.fired = 0
 
     def override(self, round_id: int, stage: str, state):
         if round_id != self._round_id or stage != self._stage:
             return state
+        self.fired += 1
         if stage in _LIST_STAGES:
             return self._override_list(state)
         return self._override_single(state)
@@ -82,7 +113,7 @@ class _ReplacementOverlay:
     def _override_single(self, live):
         array_field = _ARRAY_FIELD.get(self._stage)
         if array_field is not None:
-            self._check_shape(
+            self._check_array(
                 getattr(self._replacement, array_field),
                 getattr(live, array_field),
                 context=f"stage {self._stage!r}",
@@ -123,16 +154,21 @@ class _ReplacementOverlay:
         for cid in replaced_ids:
             live_entry = live_by_id[cid]
             source_entry = source_by_id[cid]
-            self._check_shape(
+            self._check_array(
                 getattr(source_entry, _ARRAY_FIELD[self._stage]),
                 getattr(live_entry, _ARRAY_FIELD[self._stage]),
                 context=f"stage {self._stage!r} client {cid!r}",
             )
             lineage_field = _LINEAGE_FIELD[self._stage]
             if getattr(source_entry, lineage_field) != getattr(live_entry, lineage_field):
-                # expected when replacing cross-run states (Plan §13): surface
-                # as a warning in outcome_metrics, but proceed.
-                self.base_model_mismatch = True
+                # the replacement descends from a different base model than
+                # the live replay: a delta trained/compressed under another
+                # lineage is not a restoration of this stage state (finding 3)
+                raise _InvalidIntervention(
+                    f"lineage_mismatch: {lineage_field} of client {cid!r} does "
+                    f"not match the live replay at round {self._round_id} "
+                    f"stage {self._stage!r}"
+                )
 
         if self._client_ids is None:
             return list(source)
@@ -142,29 +178,133 @@ class _ReplacementOverlay:
             for state in live
         ]
 
-    def _check_shape(self, source_array, live_array, context: str) -> None:
-        source_shape = tuple(np.shape(source_array))
-        live_shape = tuple(np.shape(live_array))
-        if source_shape != live_shape:
+    def _check_array(self, source_array, live_array, context: str) -> None:
+        source = np.asarray(source_array)
+        live = np.asarray(live_array)
+        if source.shape != live.shape:
             raise _InvalidIntervention(
-                f"shape_mismatch: source shape {source_shape} != live shape "
-                f"{live_shape} at round {self._round_id} {context}"
+                f"shape_mismatch: source shape {tuple(source.shape)} != live "
+                f"shape {tuple(live.shape)} at round {self._round_id} {context}"
+            )
+        if source.dtype != live.dtype:
+            raise _InvalidIntervention(
+                f"dtype_mismatch: source dtype {source.dtype} != live dtype "
+                f"{live.dtype} at round {self._round_id} {context}"
+            )
+        if not np.all(np.isfinite(source)):
+            raise _InvalidIntervention(
+                f"non_finite_state: source array contains non-finite values "
+                f"at round {self._round_id} {context}"
             )
 
 
-def _load_target_config(runs_root: Path, run_id: str) -> RunConfig:
-    """Rebuild a run's ``RunConfig`` from its recorded ``RunMetadata``."""
+class _ShamOverlay:
+    """Sham replacement: the LIVE boundary after a Recorder round-trip.
+
+    The recorded target state is NEVER overlaid (T5-F finding 2): swapping in
+    recorded content would repair replay drift at the intervention boundary
+    and make ``sham_deviation_* == 0`` tautological. Round-tripping the live
+    state tests only serialization fidelity. ``live_state`` captures the
+    pre-overlay boundary so an evaluation-stage sham can compare the
+    RECOMPUTED outcome against the recording instead of the self-replaced one.
+    """
+
+    def __init__(self, round_id: int, stage: str, client_ids: list[str] | None):
+        self._round_id = round_id
+        self._stage = stage
+        self._client_ids = client_ids  # None => whole-stage round-trip
+        self.fired = 0
+        self.live_state = None
+
+    def override(self, round_id: int, stage: str, state):
+        if round_id != self._round_id or stage != self._stage:
+            return state
+        self.fired += 1
+        self.live_state = state
+        if stage in _LIST_STAGES:
+            return self._round_trip_list(state)
+        return _round_trip_through_serialization(state, round_id, stage)
+
+    def _round_trip_list(self, live: list) -> list:
+        if self._client_ids is not None:
+            live_ids = {state.client_id for state in live}
+            missing = [cid for cid in self._client_ids if cid not in live_ids]
+            if missing:
+                raise _InvalidIntervention(
+                    f"scoped_clients_missing: client_ids {missing} not present "
+                    f"in the live state at round {self._round_id} "
+                    f"stage {self._stage!r}"
+                )
+        tripped = _round_trip_through_serialization(live, self._round_id, self._stage)
+        if self._client_ids is None:
+            return tripped
+        tripped_by_id = {state.client_id: state for state in tripped}
+        keep = set(self._client_ids)
+        return [
+            tripped_by_id[state.client_id] if state.client_id in keep else state
+            for state in live
+        ]
+
+
+def _load_run_metadata(runs_root: Path, run_id: str, role: str) -> RunMetadata:
+    """Load a run's recorded ``RunMetadata`` (both runs are gated on it)."""
     metadata_path = runs_root / "runs" / run_id / "metadata.json"
     if not metadata_path.is_file():
-        raise _InvalidIntervention(f"target_run_not_found: {run_id}")
+        raise _InvalidIntervention(f"{role}_run_not_found: {run_id}")
     try:
-        metadata = RunMetadata.model_validate_json(
+        return RunMetadata.model_validate_json(
             metadata_path.read_text(encoding="utf-8")
         )
+    except (OSError, TypeError, ValueError, ValidationError) as exc:
+        raise _InvalidIntervention(
+            f"{role}_metadata_invalid: {run_id} ({exc})"
+        ) from exc
+
+
+def _run_config_from_metadata(metadata: RunMetadata, role: str) -> RunConfig:
+    """Rebuild a run's ``RunConfig`` from its recorded ``RunMetadata``."""
+    try:
         # metadata.config is RunConfig.model_dump(exclude={"run_id"})
         return RunConfig.model_validate({"run_id": metadata.run_id, **metadata.config})
-    except (OSError, TypeError, ValueError, ValidationError) as exc:
-        raise _InvalidIntervention(f"target_metadata_invalid: {run_id} ({exc})") from exc
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise _InvalidIntervention(
+            f"{role}_metadata_invalid: {metadata.run_id} ({exc})"
+        ) from exc
+
+
+def _check_compatible_runs(target: RunMetadata, source: RunMetadata) -> str | None:
+    """Restore/inject gate: the two runs must be a matched pair (finding 4).
+
+    Shape equality alone says nothing about compatible coordinate meaning —
+    different ``(num_classes, num_features)`` layouts can flatten to the same
+    length. Require the same seed, an equal dataset config, and a config
+    delta limited to ``failure``; anything else is ``incompatible_runs``.
+    """
+    if target.seed != source.seed:
+        return f"incompatible_runs: seed differs ({target.seed} != {source.seed})"
+    target_config = dict(target.config)
+    source_config = dict(source.config)
+    if target_config.get("dataset") != source_config.get("dataset"):
+        return "incompatible_runs: dataset config differs"
+    target_config.pop("failure", None)
+    source_config.pop("failure", None)
+    if target_config != source_config:
+        delta = sorted(
+            key
+            for key in set(target_config) | set(source_config)
+            if target_config.get(key) != source_config.get(key)
+        )
+        return f"incompatible_runs: config delta beyond 'failure': {delta}"
+    return None
+
+
+def _make_recorder(runs_root: Path, run_id: str, role: str) -> Recorder:
+    try:
+        return Recorder(runs_root, run_id)
+    except (ValueError, OSError) as exc:
+        raise _InvalidIntervention(
+            f"invalid_run_id: {role} run {run_id!r} ({exc})"
+        ) from exc
 
 
 def _load_recorded(recorder: Recorder, run_id: str, round_id: int, stage: str, role: str):
@@ -175,14 +315,112 @@ def _load_recorded(recorder: Recorder, run_id: str, round_id: int, stage: str, r
             f"{role}_boundary_missing: run {run_id!r} has no recorded state at "
             f"round {round_id} stage {stage!r}"
         ) from None
+    except _LOAD_ERRORS as exc:
+        # corrupt content hash, invalid/unknown model payload, broken npz, ...
+        raise _InvalidIntervention(
+            f"{role}_boundary_invalid: run {run_id!r} state at round {round_id} "
+            f"stage {stage!r} failed to load ({exc})"
+        ) from exc
+
+
+def _validate_loaded_state(state, stage: str, role: str, run_id: str, round_id: int) -> None:
+    """The recorded boundary must have the stage's type and round (finding 5).
+
+    A file copied across stages can load as a valid model of the WRONG type
+    (and crash the overlay with ``AttributeError``); a hand-crafted recording
+    can claim a round outside the one it is stored under (and crash indexing
+    later). Both are validation failures with stable reasons.
+    """
+    expected = _EXPECTED_STATE_TYPE[stage]
+    if stage in _LIST_STAGES:
+        entries = state if isinstance(state, list) else None
+    else:
+        entries = [state] if isinstance(state, expected) else None
+    if entries is None or any(not isinstance(entry, expected) for entry in entries):
+        suffix = " list" if stage in _LIST_STAGES else ""
+        raise _InvalidIntervention(
+            f"{role}_state_type_mismatch: run {run_id!r} round {round_id} "
+            f"stage {stage!r} did not load as {expected.__name__}{suffix}"
+        )
+    rogue = [entry.round_id for entry in entries if entry.round_id != round_id]
+    if rogue:
+        raise _InvalidIntervention(
+            f"{role}_round_mismatch: run {run_id!r} state stored under round "
+            f"{round_id} stage {stage!r} claims round_id(s) {rogue}"
+        )
+
+
+def _validate_scope(spec: InterventionSpecification) -> list[str] | None:
+    """Scope is absent or ``{"client_ids": [<unique nonempty strings>]}``."""
+    unknown_scope = sorted(set(spec.scope) - {"client_ids"})
+    if unknown_scope:
+        raise _InvalidIntervention(
+            f"invalid_scope: unsupported scope keys {unknown_scope}"
+        )
+    if "client_ids" not in spec.scope:
+        return None
+    if spec.stage not in _LIST_STAGES:
+        raise _InvalidIntervention(
+            f"invalid_scope: client_ids scope is only valid for "
+            f"{list(_LIST_STAGES)}, got stage {spec.stage!r}"
+        )
+    raw = spec.scope["client_ids"]
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or any(not isinstance(cid, str) or not cid for cid in raw)
+        or len(set(raw)) != len(raw)
+    ):
+        raise _InvalidIntervention(
+            "invalid_scope: client_ids must be a nonempty list of unique "
+            f"nonempty strings, got {raw!r}"
+        )
+    return list(raw)
 
 
 def _round_trip_through_serialization(state, round_id: int, stage: str):
-    """Sham replacement: the same state after a Recorder save/load round-trip."""
+    """The same state after a Recorder save/load round-trip in a temp dir."""
     with tempfile.TemporaryDirectory(prefix="falcon_sham_") as tmp:
         recorder = Recorder(Path(tmp), "sham")
         recorder.record(round_id, stage, state)
         return recorder.load(round_id, stage)
+
+
+def _run_translated(cfg: RunConfig, recorder=None, overlay=None):
+    """Re-execute ``cfg``, translating infrastructure errors to invalid reasons."""
+    try:
+        return run(cfg, recorder=recorder, rng=Rng(cfg.seed), overlay=overlay)
+    except _InvalidIntervention:
+        raise
+    except _LOAD_ERRORS as exc:
+        raise _InvalidIntervention(f"run_reexecution_failed: {exc}") from exc
+
+
+def _check_replay_fidelity(cfg: RunConfig, target_recorder: Recorder) -> str | None:
+    """Sham gate (a): a NO-overlay replay must reproduce every recorded hash.
+
+    Returns ``None`` when the unmodified replay of ``cfg`` matches the
+    target's recording at every boundary; otherwise the drift reason
+    ``replay_drift:<round>/<stage>`` for the first divergent boundary in
+    pipeline order. A sham over a drifting replay certifies nothing.
+    """
+    with tempfile.TemporaryDirectory(prefix="falcon_replay_") as tmp:
+        replay_recorder = Recorder(Path(tmp), "replay")
+        _run_translated(cfg, recorder=replay_recorder)
+        replay_hashes = replay_recorder.stage_hashes()
+    try:
+        target_hashes = target_recorder.stage_hashes()
+    except _LOAD_ERRORS as exc:
+        raise _InvalidIntervention(f"target_recording_invalid: {exc}") from exc
+    stage_order = {stage: index for index, stage in enumerate(STAGES)}
+    boundaries = sorted(
+        set(replay_hashes) | set(target_hashes),
+        key=lambda key: (key[0], stage_order[key[1]]),
+    )
+    for round_id, stage in boundaries:
+        if replay_hashes.get((round_id, stage)) != target_hashes.get((round_id, stage)):
+            return f"replay_drift:{round_id}/{stage}"
+    return None
 
 
 def apply_intervention(
@@ -199,59 +437,86 @@ def apply_intervention(
         return InterventionResult(spec=spec, valid=False, reason=reason)
 
     try:
-        # scope: {} = whole stage; {"client_ids": [...]} for list stages only
-        unknown_scope = sorted(set(spec.scope) - {"client_ids"})
-        if unknown_scope:
-            return invalid(f"invalid_scope: unsupported scope keys {unknown_scope}")
-        client_ids = None
-        if "client_ids" in spec.scope:
-            if spec.stage not in _LIST_STAGES:
-                return invalid(
-                    f"invalid_scope: client_ids scope is only valid for "
-                    f"{list(_LIST_STAGES)}, got stage {spec.stage!r}"
-                )
-            client_ids = [str(cid) for cid in spec.scope["client_ids"]]
+        client_ids = _validate_scope(spec)
 
-        cfg = _load_target_config(runs_root, spec.target_run_id)
+        target_metadata = _load_run_metadata(runs_root, spec.target_run_id, "target")
+        cfg = _run_config_from_metadata(target_metadata, "target")
+        if not 0 <= spec.round_id < cfg.rounds:
+            raise _InvalidIntervention(
+                f"invalid_round_id: round_id {spec.round_id} out of range for "
+                f"a run with {cfg.rounds} rounds"
+            )
 
-        # the target must have recorded the intervention boundary (it is also
-        # the sham replacement's content source)
-        target_recorder = Recorder(runs_root, spec.target_run_id)
+        # the target must have recorded the intervention boundary, as the
+        # stage's state type, and under the requested round
+        target_recorder = _make_recorder(runs_root, spec.target_run_id, "target")
         target_state = _load_recorded(
             target_recorder, spec.target_run_id, spec.round_id, spec.stage, "target"
+        )
+        _validate_loaded_state(
+            target_state, spec.stage, "target", spec.target_run_id, spec.round_id
         )
 
         if spec.mode in ("restore", "inject"):
             # identical machinery; the direction lives in which run is
             # target/source (Plan §13.1–13.2)
-            if not (runs_root / "runs" / spec.source_run_id).is_dir():
-                return invalid(f"source_run_not_found: {spec.source_run_id}")
-            source_recorder = Recorder(runs_root, spec.source_run_id)
+            source_metadata = _load_run_metadata(runs_root, spec.source_run_id, "source")
+            incompatible = _check_compatible_runs(target_metadata, source_metadata)
+            if incompatible is not None:
+                raise _InvalidIntervention(incompatible)
+            source_recorder = _make_recorder(runs_root, spec.source_run_id, "source")
             replacement = _load_recorded(
                 source_recorder, spec.source_run_id, spec.round_id, spec.stage, "source"
             )
+            _validate_loaded_state(
+                replacement, spec.stage, "source", spec.source_run_id, spec.round_id
+            )
+            overlay = _ReplacementOverlay(
+                spec.round_id, spec.stage, replacement, client_ids
+            )
         else:  # sham: source_run_id ignored content-wise (Plan §12.4)
-            replacement = _round_trip_through_serialization(
-                target_state, spec.round_id, spec.stage
+            # (a) the unmodified replay must first prove itself drift-free
+            drift = _check_replay_fidelity(cfg, target_recorder)
+            if drift is not None:
+                raise _InvalidIntervention(drift)
+            # (b) then the LIVE boundary — never the recorded one — is
+            # round-tripped through serialization and overlaid
+            overlay = _ShamOverlay(spec.round_id, spec.stage, client_ids)
+
+        outcomes = _run_translated(cfg, overlay=overlay)
+        if overlay.fired != 1:
+            raise _InvalidIntervention(
+                f"overlay_misfire: overlay fired {overlay.fired} times at "
+                f"round {spec.round_id} stage {spec.stage!r}, expected exactly once"
             )
 
-        overlay = _ReplacementOverlay(spec.round_id, spec.stage, replacement, client_ids)
-        outcomes = run(cfg, rng=Rng(cfg.seed), overlay=overlay)
+        # final round's metrics plus "round_<t>_<metric>" for the intervention round
+        outcome_metrics: dict[str, float] = dict(outcomes[-1].metrics)
+        for key, value in outcomes[spec.round_id].metrics.items():
+            outcome_metrics[f"round_{spec.round_id}_{key}"] = value
+        if spec.mode == "sham":
+            # a sham must reproduce the unmodified target run; report the deviation
+            if spec.stage == "evaluation":
+                # (c) self-replacing the outcome is tautological: compare the
+                # RECOMPUTED (pre-overlay) outcome against the recording at
+                # the intervention round instead
+                recomputed = overlay.live_state
+                recorded_at_round = _load_recorded(
+                    target_recorder, spec.target_run_id, spec.round_id, spec.stage, "target"
+                )
+                for key, value in recomputed.metrics.items():
+                    outcome_metrics[f"sham_deviation_{key}"] = (
+                        value - recorded_at_round.metrics.get(key, float("nan"))
+                    )
+            else:
+                recorded_final = _load_recorded(
+                    target_recorder, spec.target_run_id, cfg.rounds - 1, "evaluation", "target"
+                )
+                for key, value in outcomes[-1].metrics.items():
+                    outcome_metrics[f"sham_deviation_{key}"] = (
+                        value - recorded_final.metrics.get(key, float("nan"))
+                    )
+
+        return InterventionResult(spec=spec, valid=True, outcome_metrics=outcome_metrics)
     except _InvalidIntervention as exc:
         return invalid(str(exc))
-
-    # final round's metrics plus "round_<t>_<metric>" for the intervention round
-    outcome_metrics: dict[str, float] = dict(outcomes[-1].metrics)
-    for key, value in outcomes[spec.round_id].metrics.items():
-        outcome_metrics[f"round_{spec.round_id}_{key}"] = value
-    if overlay.base_model_mismatch:
-        outcome_metrics[WARNING_BASE_MODEL_MISMATCH] = 1.0
-    if spec.mode == "sham":
-        # a sham must reproduce the unmodified target run; report the deviation
-        recorded_final = target_recorder.load(cfg.rounds - 1, "evaluation")
-        for key, value in outcomes[-1].metrics.items():
-            outcome_metrics[f"sham_deviation_{key}"] = value - recorded_final.metrics.get(
-                key, float("nan")
-            )
-
-    return InterventionResult(spec=spec, valid=True, outcome_metrics=outcome_metrics)

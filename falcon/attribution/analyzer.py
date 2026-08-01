@@ -1,6 +1,17 @@
 """Pure attribution analysis over matched-pair schema objects."""
 
-from falcon.metrics.effects import bis, failure_gap, nsie, nsre, sie, sre
+from math import isfinite
+from statistics import fmean
+
+from falcon.metrics.effects import (
+    bis,
+    failure_gap,
+    nsie,
+    nsre,
+    sham_adjusted,
+    sie,
+    sre,
+)
 from falcon.schema import (
     STAGES,
     AttributionReport,
@@ -10,16 +21,16 @@ from falcon.schema import (
 
 
 def _sham_deviation(
-    result: InterventionResult,
     value: float,
-    pair: PairValidationReport,
-    m_ref: float,
     m_fail: float,
     higher_is_better: bool,
 ) -> float:
-    baseline = m_ref if result.spec.target_run_id == pair.reference_run_id else m_fail
     direction = 1.0 if higher_is_better else -1.0
-    return direction * (value - baseline)
+    return direction * (value - m_fail)
+
+
+def _mean(values: list[float]) -> float | None:
+    return fmean(values) if values else None
 
 
 def attribute(
@@ -33,71 +44,143 @@ def attribute(
     min_gap: float,
     sham_tolerance: float,
     epsilon_tie: float = 1e-9,
+    decisive_margin: float = 0.05,
     bystander_threshold: float = 0.1,
 ) -> AttributionReport:
-    """Rank stage origins from restore, inject, and sham outcomes."""
-    notes: list[str] = []
-    grouped: dict[str, dict[str, InterventionResult]] = {}
-    for result in interventions:
-        stage, mode = result.spec.stage, result.spec.mode
-        if not result.valid:
-            notes.append(f"INVALID_INTERVENTION:{stage}:{mode}")
-        elif metric in result.outcome_metrics:
-            grouped.setdefault(stage, {})[mode] = result
+    """Rank stages, preferring bidirectional evidence when scores are equal.
 
+    Propagation roles remain provisional pending the standardized deviations in
+    Plan 14.9.
+    """
     gap = failure_gap(m_ref, m_fail, higher_is_better)
+    if pair.status == "INVALID_PAIR":
+        return AttributionReport(
+            pair=pair,
+            outcome="invalid_pair",
+            failure_gap={metric: gap},
+            stage_effects={},
+            origin_ranking=[],
+            origin_set=[],
+            roles={},
+            notes=["INVALID_PAIR"],
+        )
+
+    notes: list[str] = []
+    grouped: dict[str, dict[str, dict[int, InterventionResult]]] = {}
+    for result in interventions:
+        stage, mode, round_id = (
+            result.spec.stage,
+            result.spec.mode,
+            result.spec.round_id,
+        )
+        value = result.outcome_metrics.get(metric)
+        if not result.valid or value is None or not isfinite(value):
+            notes.append(f"INVALID_INTERVENTION:{stage}:{mode}")
+            continue
+        grouped.setdefault(stage, {}).setdefault(mode, {})[round_id] = result
+
+    if not isfinite(gap):
+        notes.append("INSUFFICIENT_FAILURE_GAP")
+        return AttributionReport(
+            pair=pair,
+            outcome="insufficient_failure_gap",
+            failure_gap={metric: gap},
+            stage_effects={},
+            origin_ranking=[],
+            origin_set=[],
+            roles={},
+            notes=notes,
+        )
+
     stage_effects: dict[str, dict[str, float]] = {}
     scores: dict[str, float] = {}
+    bidirectional: set[str] = set()
 
     for stage in STAGES:
         results = grouped.get(stage)
         if not results:
             continue
 
-        effects: dict[str, float] = {}
-        restore = results.get("restore")
-        inject = results.get("inject")
-        sham = results.get("sham")
+        effect_rounds = {
+            round_id
+            for mode_results in results.values()
+            for round_id in mode_results
+        }
+        effects: dict[str, float] = {"n_rounds": float(len(effect_rounds))}
+        restores = [
+            result.outcome_metrics[metric]
+            for result in results.get("restore", {}).values()
+        ]
+        injections = [
+            result.outcome_metrics[metric]
+            for result in results.get("inject", {}).values()
+        ]
+        shams = [
+            result.outcome_metrics[metric]
+            for result in results.get("sham", {}).values()
+        ]
 
-        normalized_restore = None
-        if restore is not None:
-            restored = restore.outcome_metrics[metric]
-            effects["SRE"] = sre(restored, m_fail, higher_is_better)
-            normalized_restore = nsre(
+        restore_effects = [
+            sre(value, m_fail, higher_is_better) for value in restores
+        ]
+        normalized_restores = [
+            value
+            for restored in restores
+            if (value := nsre(
                 restored, m_ref, m_fail, higher_is_better, min_gap
-            )
-            if normalized_restore is not None:
-                effects["nSRE"] = normalized_restore
+            )) is not None
+        ]
+        if (value := _mean(restore_effects)) is not None:
+            effects["SRE"] = value
+        normalized_restore = _mean(normalized_restores)
+        if normalized_restore is not None:
+            effects["nSRE"] = normalized_restore
 
-        normalized_inject = None
-        if inject is not None:
-            injected = inject.outcome_metrics[metric]
-            effects["SIE"] = sie(m_ref, injected, higher_is_better)
-            normalized_inject = nsie(
+        inject_effects = [
+            sie(m_ref, value, higher_is_better) for value in injections
+        ]
+        normalized_injections = [
+            value
+            for injected in injections
+            if (value := nsie(
                 m_ref, injected, m_fail, higher_is_better, min_gap
-            )
-            if normalized_inject is not None:
-                effects["nSIE"] = normalized_inject
+            )) is not None
+        ]
+        if (value := _mean(inject_effects)) is not None:
+            effects["SIE"] = value
+        normalized_inject = _mean(normalized_injections)
+        if normalized_inject is not None:
+            effects["nSIE"] = normalized_inject
+
+        for mode, values in (
+            ("restore", normalized_restores),
+            ("inject", normalized_injections),
+        ):
+            if any(value < 0 for value in values) and any(
+                value > 0 for value in values
+            ):
+                notes.append(f"ROUND_SIGN_DISAGREEMENT:{stage}:{mode}")
 
         combined = bis(normalized_restore, normalized_inject)
         if combined is not None:
             effects["BIS"] = combined
             scores[stage] = combined
+            bidirectional.add(stage)
         elif normalized_restore is not None:
             scores[stage] = normalized_restore
         elif normalized_inject is not None:
             scores[stage] = normalized_inject
 
-        if sham is not None:
-            effects["sham_dev"] = _sham_deviation(
-                sham,
-                sham.outcome_metrics[metric],
-                pair,
-                m_ref,
-                m_fail,
-                higher_is_better,
-            )
+        sham_deviations = [
+            _sham_deviation(value, m_fail, higher_is_better) for value in shams
+        ]
+        if (value := _mean(sham_deviations)) is not None:
+            effects["sham_dev"] = value
+            if "SRE" in effects:
+                effects["SAE"] = sham_adjusted(effects["SRE"], value)
 
+        if effects.get("nSRE", 0.0) > 1 or effects.get("nSIE", 0.0) > 1:
+            notes.append(f"OVERSHOOT:{stage}")
         stage_effects[stage] = effects
 
     report_args = {
@@ -107,44 +190,101 @@ def attribute(
         "notes": notes,
     }
 
-    if abs(gap) < min_gap:
+    if gap < min_gap:
         notes.append("INSUFFICIENT_FAILURE_GAP")
-        return AttributionReport(origin_ranking=[], roles={}, **report_args)
+        if gap <= 0:
+            notes.append("NONPOSITIVE_FAILURE_GAP")
+        return AttributionReport(
+            outcome="insufficient_failure_gap",
+            origin_ranking=[],
+            origin_set=[],
+            roles={},
+            **report_args,
+        )
 
     sham_violations = [
         stage
         for stage in STAGES
-        if abs(stage_effects.get(stage, {}).get("sham_dev", 0.0))
-        > sham_tolerance
+        if "sham_dev" in stage_effects.get(stage, {})
+        and abs(stage_effects[stage]["sham_dev"]) >= sham_tolerance
     ]
     if sham_violations:
         notes.extend(f"SHAM_VIOLATION:{stage}" for stage in sham_violations)
-        return AttributionReport(origin_ranking=[], roles={}, **report_args)
+        return AttributionReport(
+            outcome="sham_violation",
+            origin_ranking=[],
+            origin_set=[],
+            roles={},
+            **report_args,
+        )
 
     stage_order = {stage: index for index, stage in enumerate(STAGES)}
-    ranking = sorted(scores, key=lambda stage: (-scores[stage], stage_order[stage]))
-    max_score = scores[ranking[0]] if ranking else None
+    ranking = sorted(
+        scores,
+        key=lambda stage: (
+            -scores[stage],
+            stage not in bidirectional,
+            stage_order[stage],
+        ),
+    )
     if ranking:
+        top_score = scores[ranking[0]]
         tied = [
+            stage
+            for stage in ranking
+            if abs(top_score - scores[stage]) <= epsilon_tie
+        ]
+        ranking[: len(tied)] = sorted(
+            tied,
+            key=lambda stage: (stage not in bidirectional, stage_order[stage]),
+        )
+
+    first = pair.first_divergence_stage
+    if ranking and first in scores:
+        max_score = max(scores.values())
+        if max_score - scores[first] <= decisive_margin + epsilon_tie:
+            ranking.remove(first)
+            ranking.insert(0, first)
+
+    tied = (
+        [
             stage
             for stage in ranking
             if abs(scores[ranking[0]] - scores[stage]) <= epsilon_tie
         ]
-        ranking[: len(tied)] = sorted(tied, key=stage_order.__getitem__)
+        if ranking
+        else []
+    )
+    if len(tied) > 1:
+        notes.append(f"UNRESOLVED_BETWEEN:{','.join(tied)}")
 
-    first = pair.first_divergence_stage
-    if first in scores and max_score is not None and scores[first] >= max_score - epsilon_tie:
-        ranking.remove(first)
-        ranking.insert(0, first)
+    for stage in ranking:
+        if "sham_dev" not in stage_effects[stage]:
+            notes.append(f"SHAM_CONTROL_MISSING:{stage}")
+    no_sham_controls = not any(
+        "sham_dev" in effects for effects in stage_effects.values()
+    )
+    if no_sham_controls:
+        notes.append("NO_SHAM_CONTROLS")
 
-    if len(ranking) >= 2 and abs(scores[ranking[0]] - scores[ranking[1]]) <= epsilon_tie:
-        notes.append(f"UNRESOLVED_BETWEEN:{ranking[0]},{ranking[1]}")
+    all_negligible = bool(ranking) and all(
+        abs(scores[stage]) < bystander_threshold for stage in ranking
+    )
+    unresolved = len(tied) > 1 or no_sham_controls or all_negligible or not ranking
+    if unresolved:
+        origin_set = tied or ranking
+        outcome = "unresolved"
+    else:
+        origin_set = []
+        outcome = "unique_origin"
 
     roles: dict[str, str] = {}
     for index, stage in enumerate(ranking):
         score = scores[stage]
-        if index == 0:
+        if outcome == "unique_origin" and index == 0:
             roles[stage] = "origin_candidate"
+        elif stage in origin_set:
+            roles[stage] = "unresolved_candidate"
         elif score < 0:
             roles[stage] = "suppressor_candidate"
         elif score < bystander_threshold:
@@ -152,4 +292,10 @@ def attribute(
         else:
             roles[stage] = "carrier_or_amplifier"
 
-    return AttributionReport(origin_ranking=ranking, roles=roles, **report_args)
+    return AttributionReport(
+        outcome=outcome,
+        origin_ranking=ranking,
+        origin_set=origin_set,
+        roles=roles,
+        **report_args,
+    )

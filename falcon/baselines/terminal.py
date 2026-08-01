@@ -91,11 +91,14 @@ class NearestCentroidStageClassifier:
 
     - ``fit`` z-normalizes per feature using the training mean/std
       (population std, ddof=0); zero-variance features get scale 1.0 so they
-      cannot produce NaN/inf or dominate distances.
+      cannot produce NaN/inf or dominate distances. Non-finite training
+      features are rejected — they would poison every centroid silently.
     - Centroids are the per-class means in normalized space; classes keep
       first-appearance order from ``y``.
     - ``predict`` returns the label of the euclidean-nearest centroid; ties
       break to the earliest class in first-appearance order (``np.argmin``).
+      A non-finite feature vector is REJECTED: ``np.argmin`` over NaN
+      distances returns index 0, a silent first-class bias (T8-F finding 6).
     """
 
     def __init__(self) -> None:
@@ -112,6 +115,8 @@ class NearestCentroidStageClassifier:
         if not X:
             raise ValueError("cannot fit on an empty training set")
         data = np.stack([np.asarray(x, dtype=np.float64) for x in X])
+        if not np.all(np.isfinite(data)):
+            raise ValueError("non-finite training features")
         self._mean = data.mean(axis=0)
         std = data.std(axis=0)
         self._scale = np.where(std == 0.0, 1.0, std)  # zero-variance guard
@@ -128,6 +133,9 @@ class NearestCentroidStageClassifier:
     def predict(self, x: np.ndarray) -> str:
         if self._centroids is None or self._mean is None or self._scale is None:
             raise RuntimeError("predict called before fit")
-        z = (np.asarray(x, dtype=np.float64) - self._mean) / self._scale
+        x = np.asarray(x, dtype=np.float64)
+        if not np.all(np.isfinite(x)):
+            raise ValueError("non-finite feature vector")
+        z = (x - self._mean) / self._scale
         distances = np.linalg.norm(self._centroids - z, axis=1)
         return self._classes[int(np.argmin(distances))]

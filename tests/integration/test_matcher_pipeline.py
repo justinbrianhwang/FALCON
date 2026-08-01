@@ -81,11 +81,9 @@ def test_real_pipeline_array_tamper_finds_first_divergence(tmp_path):
     )
     reference = _record_run(tmp_path, _config("reference", None))
     failure = _record_run(tmp_path, _config("failure", spec))
-    path = next((failure.run_dir / "round_1" / "local").glob("*.npz"))
-    with np.load(path, allow_pickle=False) as archive:
-        arrays = {key: archive[key].copy() for key in archive.files}
-    arrays["array_0000"][0] += 1.0
-    np.savez(path, **arrays)
+    local = failure.load(1, "local")
+    local[0].update[0] += 1.0
+    failure.record(1, "local", local)
 
     report = validate_pair(reference.run_dir, failure.run_dir)
 

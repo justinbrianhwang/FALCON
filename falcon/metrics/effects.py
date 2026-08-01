@@ -1,5 +1,7 @@
 """Direction-aware outcome effects for matched FALCON runs."""
 
+from math import isfinite
+
 
 def _oriented(value: float, higher_is_better: bool) -> float:
     return value if higher_is_better else -value
@@ -32,7 +34,7 @@ def nsre(
 ) -> float | None:
     """Return the restoration effect normalized by the failure gap."""
     gap = failure_gap(m_ref, m_fail, higher_is_better)
-    if abs(gap) < min_gap:
+    if not isfinite(gap) or gap < min_gap:
         return None
     return sre(m_restored, m_fail, higher_is_better) / gap
 
@@ -55,7 +57,7 @@ def nsie(
 ) -> float | None:
     """Return the injection effect normalized by the failure gap."""
     gap = failure_gap(m_ref, m_fail, higher_is_better)
-    if abs(gap) < min_gap:
+    if not isfinite(gap) or gap < min_gap:
         return None
     return sie(m_ref, m_injected, higher_is_better) / gap
 
@@ -68,6 +70,7 @@ def bis(
     """Combine normalized restore and inject evidence."""
     if nsre_value is None or nsie_value is None:
         return None
+    # At lam=0.5 this intentionally reduces to min(nSRE, nSIE).
     return (nsre_value + nsie_value) / 2 - lam * abs(
         nsre_value - nsie_value
     )

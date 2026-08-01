@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from falcon.schema import AttributionReport, FailureSpecification, InterventionResult
 
-_EFFECT_COLUMNS = ("SRE", "SIE", "nSRE", "nSIE", "BIS", "sham_dev")
+_EFFECT_COLUMNS = (
+    "SRE",
+    "SIE",
+    "nSRE",
+    "nSIE",
+    "BIS",
+    "sham_dev",
+    "SAE",
+    "n_rounds",
+)
 
 
 def _number(value: float | None) -> str:
@@ -31,6 +40,7 @@ def render_markdown(
         f"- Reference run: `{pair.reference_run_id}`",
         f"- Failure run: `{pair.failure_run_id}`",
         f"- Status: **{pair.status}**",
+        f"- Attribution outcome: **{report.outcome}**",
         f"- First divergence: "
         + (
             f"round {pair.first_divergence_round}, stage `{pair.first_divergence_stage}`"
@@ -63,8 +73,8 @@ def render_markdown(
             "",
             "## Measured evidence — intervention effects",
             "",
-            "| Stage | SRE | SIE | nSRE | nSIE | BIS | sham_dev |",
-            "|---|---:|---:|---:|---:|---:|---:|",
+            "| Stage | SRE | SIE | nSRE | nSIE | BIS | sham_dev | SAE | n_rounds |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     if report.stage_effects:
@@ -72,7 +82,7 @@ def render_markdown(
             values = " | ".join(_number(effects.get(name)) for name in _EFFECT_COLUMNS)
             lines.append(f"| {stage} | {values} |")
     else:
-        lines.append("| — | — | — | — | — | — | — |")
+        lines.append("| — | — | — | — | — | — | — | — | — |")
 
     lines.extend(["", "## Inferred origin ranking and roles", ""])
     if report.origin_ranking:
@@ -84,12 +94,18 @@ def render_markdown(
         lines.append("No causal origin ranking is available.")
 
     lines.extend(["", "## Counterfactual explanation", ""])
-    if report.origin_ranking:
+    if report.outcome == "unique_origin" and report.origin_ranking:
         origin = report.origin_ranking[0]
         effects = report.stage_effects.get(origin, {})
         lines.append(
             f"Restoring {origin} closes {_percent(effects.get('nSRE'))} of the gap; "
             f"injecting reproduces {_percent(effects.get('nSIE'))}."
+        )
+    elif report.origin_set:
+        stages = ", ".join(f"`{stage}`" for stage in report.origin_set)
+        lines.append(
+            f"Attribution is unresolved among {stages}; no single-stage "
+            "counterfactual is supported."
         )
     else:
         lines.append("No counterfactual explanation is supported by the available evidence.")
@@ -114,8 +130,11 @@ def render_markdown(
         lines.append("- No additional warnings.")
 
     if ground_truth is not None:
-        predicted = report.origin_ranking[0] if report.origin_ranking else "unresolved"
-        agrees = predicted == ground_truth.stage
+        resolved = report.outcome == "unique_origin" and bool(report.origin_ranking)
+        predicted = report.origin_ranking[0] if resolved else "unresolved"
+        verdict = "yes" if predicted == ground_truth.stage else "no"
+        if not resolved:
+            verdict = "unresolved"
         lines.extend(
             [
                 "",
@@ -124,7 +143,7 @@ def render_markdown(
                 f"- Injected stage: `{ground_truth.stage}`",
                 f"- Injected failure type: `{ground_truth.type}`",
                 f"- Predicted origin: `{predicted}`",
-                f"- Prediction matches injected stage: **{'yes' if agrees else 'no'}**",
+                f"- Prediction matches injected stage: **{verdict}**",
             ]
         )
 

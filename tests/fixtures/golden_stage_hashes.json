@@ -1,0 +1,43 @@
+{
+  "config": {
+    "aggregation": {
+      "rule": "weighted_mean"
+    },
+    "compression": {
+      "kind": "identity"
+    },
+    "dataset": {
+      "num_classes": 2,
+      "num_clients": 5,
+      "num_features": 10,
+      "samples_per_client": 80
+    },
+    "local": {
+      "batch_size": 16,
+      "local_steps": 8,
+      "lr": 0.5
+    },
+    "rounds": 3,
+    "seed": 42,
+    "selection": {
+      "clients_per_round": 3
+    }
+  },
+  "stage_hashes": {
+    "0/aggregation": "40b7a11a5237ac71fad0046f8dc3b8b1e2937a5ad6749968137562506eb5ab4c",
+    "0/compression": "31ad825c30e7aed2f00053ca545f275a04c4766d14748328896e1ca5c5a0735d",
+    "0/evaluation": "c9946510ee5d05ccc17f2d160a2e506c550407943716de0492942254ce91527f",
+    "0/local": "1b22f82439e932045a4d2b9923a60b8573db4755dca5dcf3f60103f1168e6c96",
+    "0/selection": "8e4f789d089a1c005b4610e2bc6df1cbe59f21ddd6b835e71336918efae9577e",
+    "1/aggregation": "28e26ee8e01aaf6dc99acd8da67af335ae65f83249a1bbe67d85793c6b11b27c",
+    "1/compression": "1bc03b01a22b23b196aba93f9c610256a93010687d7ec4b077f4f50f2cbdce0d",
+    "1/evaluation": "1c9fe02d5e863d2d84917e599176d64f93cd5b16d33620e17111f6bb8a9cc7bd",
+    "1/local": "66359505cfc8173c34a0b229e0cf2f5475baa3bc4c1269fe79ba9d23ea456a70",
+    "1/selection": "9b1baef979ab834562e0f30163cb1c55f54e64a370852073bb934c70f40ddc93",
+    "2/aggregation": "78b0344b0806aac0d8357efba6e2aa648bc686bd2f40a09dbef695e849695f58",
+    "2/compression": "3fc907a785d7b37cd1ecc3cc29a970f37bec007f389819755d44b9fee3c63a7a",
+    "2/evaluation": "336662d6bdc42f9772df2bf551251bff01e4b68b1a3aa2b4c1c17c9b62e4b512",
+    "2/local": "e5006f564fe950a96c54e3a67bbba14218a0d83e5428f2722f3e7bf6ed28c74c",
+    "2/selection": "e647ad17b2a70f11ed7e85597edf20ac2b13f1177109eb9ba6055e077e7b5e52"
+  }
+}

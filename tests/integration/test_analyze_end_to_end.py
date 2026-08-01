@@ -73,6 +73,8 @@ def test_analyze_pair_end_to_end(tmp_path):
     )
 
     assert report.origin_ranking[0] == ground_truth.stage
+    assert report.outcome == "unresolved"
+    assert report.origin_set == ["compression", "aggregation"]
     assert len(interventions) == 12
     assert all(result.valid for result in interventions)
     assert all(
@@ -92,8 +94,44 @@ def test_analyze_pair_end_to_end(tmp_path):
         "## Ground truth (benchmark)",
     ):
         assert section in markdown
-    assert "Restoring compression closes 100.0% of the gap" in markdown
-    assert "injecting reproduces 100.0%." in markdown
+    assert "Restoring compression closes" not in markdown
+    assert "unresolved among `compression`, `aggregation`" in markdown
+    assert "Prediction matches injected stage: **unresolved**" in markdown
+
+    for recorder in (reference, failure):
+        outcome = recorder.load(4, "evaluation")
+        outcome.metrics.pop("loss")
+        recorder.record(4, "evaluation", outcome)
+    missing_metric_report, missing_metric_interventions = analyze_pair(
+        tmp_path,
+        "reference",
+        "failure",
+        metric="loss",
+        higher_is_better=False,
+        min_gap=0.005,
+        sham_tolerance=1e-9,
+    )
+    assert missing_metric_report.outcome == "unresolved"
+    assert "MISSING_METRIC:loss" in missing_metric_report.notes
+    assert missing_metric_interventions == []
+
+    for recorder in (reference, failure):
+        (recorder.run_dir / "round_4" / "evaluation.json").unlink()
+    missing_evaluation_report, missing_evaluation_interventions = analyze_pair(
+        tmp_path,
+        "reference",
+        "failure",
+        metric="loss",
+        higher_is_better=False,
+        min_gap=0.005,
+        sham_tolerance=1e-9,
+    )
+    assert missing_evaluation_report.outcome == "unresolved"
+    assert any(
+        note.startswith("INVALID_EVALUATION:")
+        for note in missing_evaluation_report.notes
+    )
+    assert missing_evaluation_interventions == []
 
     metadata_path = failure.run_dir / "metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -110,5 +148,6 @@ def test_analyze_pair_end_to_end(tmp_path):
         sham_tolerance=1e-9,
     )
     assert invalid_report.pair.status == "INVALID_PAIR"
+    assert invalid_report.outcome == "invalid_pair"
     assert "INVALID_PAIR" in invalid_report.notes
     assert invalid_interventions == []

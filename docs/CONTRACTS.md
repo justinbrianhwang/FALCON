@@ -1,4 +1,4 @@
-# FALCON Stage & Schema Contracts (v0.1)
+# FALCON Stage & Schema Contracts (v0.2)
 
 Single source of truth for names and signatures. **Codex and Kimi both code against this file.**
 Changing a name/signature here requires PM sign-off; do not improvise different names.
