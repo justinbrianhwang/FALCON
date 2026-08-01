@@ -65,9 +65,3 @@ experiments/    experiment entry scripts
 tests/          unit / integration / replay / intervention tests
 docs/tasks/     developer task specs (PM → Codex/Kimi)
 ```
-
-## Workflow
-
-- PM (Claude) writes task specs in `docs/tasks/`, reviews and integrates.
-- Developers (Codex, Kimi) implement against `docs/CONTRACTS.md`.
-- Never run paper experiments outside a committed config + seed.
