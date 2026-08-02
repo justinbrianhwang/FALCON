@@ -1,0 +1,35 @@
+# Tier-1 MNIST reference case (Task T18) — maps 1:1 onto falcon.schema.RunConfig.
+#
+# SmallCNN (2 conv + 2 fc, float32 torch params) over the processed MNIST
+# pickle, Dirichlet(0.5) partition of the 60k train split across 10 clients,
+# eval on the full 10k test split. Calibration: lr 0.1 x 20 local steps keeps
+# per-round progress small enough that the clean curve climbs instead of
+# saturating at round 0 (same anti-saturation rationale as T11).
+# Measured clean trajectory (seed 42): accuracy 0.262 0.474 0.636 0.764 0.763,
+# loss 2.252 1.615 1.124 0.839 0.725.
+run_id: mnist_reference
+seed: 42
+rounds: 5
+dataset:
+  name: mnist
+  num_clients: 10
+  num_classes: 10
+  dirichlet_alpha: 0.5
+  seed: 1001
+model:
+  name: small_cnn
+  parameters: {}
+selection:
+  clients_per_round: 5
+  policy: uniform
+local:
+  lr: 0.1
+  local_steps: 20
+  batch_size: 64
+compression:
+  kind: identity
+  parameters: {}
+aggregation:
+  rule: weighted_mean
+  parameters: {}
+failure: null

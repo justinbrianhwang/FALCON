@@ -27,3 +27,6 @@ include = ["falcon*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: heavyweight tests (e.g. CIFAR-10 Tier-1); deselect with -m 'not slow'",
+]

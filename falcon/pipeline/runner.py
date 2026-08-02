@@ -47,9 +47,34 @@ def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeSt
 
         rng = Rng(cfg.seed)
 
-    partition = make_partition(cfg.dataset)
-    eval_data = make_eval_data(cfg.dataset)
-    params = init_params(cfg.dataset.num_features, cfg.dataset.num_classes, rng)
+    # T18 dispatch: real image datasets load from processed pickles
+    # (falcon.data_paths); torch stays confined to models/torch_local — both
+    # imports are lazy so the synthetic path never pulls in torch.
+    if cfg.dataset.name == "synthetic":
+        partition = make_partition(cfg.dataset)
+        eval_data = make_eval_data(cfg.dataset)
+    else:
+        from .real_data import load_eval_data, load_partition
+
+        partition = load_partition(cfg.dataset)
+        eval_data = load_eval_data(cfg.dataset)
+
+    if cfg.model.name == "logistic_regression":
+        if cfg.dataset.name != "synthetic":
+            raise ValueError(
+                "logistic_regression is the synthetic-tier model; use "
+                f"model.name 'small_cnn' for dataset {cfg.dataset.name!r}"
+            )
+        params = init_params(cfg.dataset.num_features, cfg.dataset.num_classes, rng)
+        local_fn, eval_fn = local_train, evaluate
+        model_kwargs: dict = {}
+    else:
+        from . import torch_local
+        from .models import build_model, flatten
+
+        params = flatten(build_model(cfg.model, cfg.dataset, rng=rng))  # float32
+        local_fn, eval_fn = torch_local.local_train, torch_local.evaluate
+        model_kwargs = {"model_cfg": cfg.model, "dataset_cfg": cfg.dataset}
     pool = sorted(partition)
 
     # T4: one injector per run; None for reference runs, which then execute
@@ -73,7 +98,7 @@ def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeSt
         local_states = [
             _stage(
                 "local",
-                lambda cid=cid: local_train(
+                lambda cid=cid: local_fn(
                     params,
                     cid,
                     partition[cid],
@@ -82,6 +107,7 @@ def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeSt
                     if injector is None
                     else injector.local_cfg(cid, cfg.local, round_id),
                     rng,
+                    **model_kwargs,
                 ),
             )
             for cid in selection.selected_ids
@@ -122,7 +148,7 @@ def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeSt
 
         params = params + aggregation.aggregate
 
-        outcome = _stage("evaluation", lambda: evaluate(params, eval_data))
+        outcome = _stage("evaluation", lambda: eval_fn(params, eval_data, **model_kwargs))
         outcome.round_id = round_id
         if overlay is not None:
             outcome = overlay.override(round_id, "evaluation", outcome)

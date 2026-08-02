@@ -1,0 +1,42 @@
+# Tier-1 CIFAR-10 headline reference case (Task T18, Plan §17.2 Tier 1).
+#
+# SmallCNN (2 conv + 2 fc, float32 torch params) over the processed CIFAR-10
+# pickle, Dirichlet(0.1) partition of the 50k train split across 50 clients
+# (heavily non-IID: most clients hold 1-3 dominant classes, sizes 76-3343),
+# FedAvg with 5 clients/round (10% participation), eval on the full 10k test
+# split. Calibration: with ~1-class clients, lr 0.05 x 10 local steps keeps
+# the conflicting per-client updates small enough for the average to make
+# steady progress; measured T18 probes with lr 0.1 or 40 local steps
+# oscillate without rising. 60 rounds are chosen so the curve visibly rises
+# from the 0.10 floor (~7 min on a single CPU thread).
+# Measured clean trajectory (seed 42): accuracy flat at 0.100 for rounds 0-5,
+# then climbing noisily — 0.156 at round 20, 0.215 at round 35, 0.210 at
+# round 55; last-10 mean 0.163 vs 0.103 for rounds 0-9. Loss 3.17 -> ~2.2-2.5.
+# The slow, noisy rise is expected FedAvg behavior at 10% participation under
+# Dirichlet 0.1.
+run_id: cifar10_reference
+seed: 42
+rounds: 60
+dataset:
+  name: cifar10
+  num_clients: 50
+  num_classes: 10
+  dirichlet_alpha: 0.1
+  seed: 1001
+model:
+  name: small_cnn
+  parameters: {}
+selection:
+  clients_per_round: 5
+  policy: uniform
+local:
+  lr: 0.05
+  local_steps: 10
+  batch_size: 64
+compression:
+  kind: identity
+  parameters: {}
+aggregation:
+  rule: weighted_mean
+  parameters: {}
+failure: null

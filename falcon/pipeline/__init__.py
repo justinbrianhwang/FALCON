@@ -1,4 +1,4 @@
-"""Deterministic synthetic FL pipeline (Task T2, contract v0.1)."""
+"""Deterministic FL pipeline (Task T2 synthetic tier, Task T18 Tier-1 real data + torch)."""
 from .runner import run
 from .stages import (
     aggregate,

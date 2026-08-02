@@ -29,7 +29,7 @@ class ClientLocalState(_ArrayModel):
     round_id: int
     client_id: str
     base_model_hash: str
-    update: np.ndarray  # delta = trained - global, flat float64
+    update: np.ndarray  # delta = trained - global, flat; float64 synthetic, float32 Tier-1 torch
     num_examples: int
     num_steps: int
     loss_history: list[float]
@@ -40,7 +40,7 @@ class CompressionState(_ArrayModel):
     round_id: int
     client_id: str
     uncompressed_hash: str
-    update: np.ndarray  # decompressed update actually seen by the server
+    update: np.ndarray  # decompressed update seen by the server; dtype follows the tier (float64/float32)
     compression_params: dict[str, Any] = Field(default_factory=dict)
     bytes_transmitted: int = 0
 
@@ -51,7 +51,7 @@ class AggregationState(_ArrayModel):
     accepted_ids: list[str]
     rejected_ids: list[str]
     weights: dict[str, float]
-    aggregate: np.ndarray
+    aggregate: np.ndarray  # flat mean update; dtype follows the tier (float64/float32)
 
 
 class OutcomeState(_ArrayModel):

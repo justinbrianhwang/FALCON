@@ -3,6 +3,12 @@
 Model: flat float64 param vector for multinomial logistic regression, layout
 ``[W (K, D) row-major | b (K,)]``, i.e. length ``K * (D + 1)`` including bias.
 Pure numpy; all randomness comes from the named streams of the provided rng.
+
+Tier 1 (Task T18): the torch path (``torch_local``/``models``) carries flat
+float32 vectors (torch-native; synthetic stays float64). Selection,
+compression and aggregation below are dtype-preserving, so they work
+unchanged on either tier's flat arrays; only local training and evaluation
+are torch-bound.
 """
 from __future__ import annotations
 
@@ -158,10 +164,12 @@ def compress(local_state: ClientLocalState, cfg: CompressionConfig, rng: "Rng") 
     ``topk`` keeps the top ``ceil(k_ratio * n)`` coordinates by magnitude
     (``k_ratio`` in ``cfg.parameters``, in (0, 1]) and zeroes the rest, with
     the larger-index tie-break of ``_topk``; ``bytes_transmitted`` is
-    ``nnz * 8 + nnz * 4`` (8 bytes per value, 4 per coordinate index) where
-    ``nnz`` counts the nonzeros of the sparsified update actually sent.
+    ``nnz * itemsize + nnz * 4`` (itemsize bytes per value — 8 for the
+    synthetic float64 tier, 4 for the Tier-1 torch float32 updates — and 4
+    per coordinate index) where ``nnz`` counts the nonzeros of the sparsified
+    update actually sent. The update's dtype is preserved (T18).
     """
-    update = np.array(local_state.update, dtype=np.float64, copy=True)
+    update = np.array(local_state.update, copy=True)
     uncompressed_hash = _sha256(update)
     if cfg.kind == "identity":
         compressed = update
@@ -173,7 +181,7 @@ def compress(local_state: ClientLocalState, cfg: CompressionConfig, rng: "Rng") 
         k = min(update.shape[0], math.ceil(k_ratio * update.shape[0]))
         compressed = _topk(update, k)
         nnz = int(np.count_nonzero(compressed))
-        bytes_transmitted = nnz * 8 + nnz * 4
+        bytes_transmitted = nnz * update.dtype.itemsize + nnz * 4
     else:
         raise NotImplementedError(f"compression kind {cfg.kind!r} not implemented yet")
     return CompressionState(
@@ -192,7 +200,12 @@ def aggregate(
     cfg: AggregationConfig,
     rng: "Rng",
 ) -> AggregationState:
-    """``weighted_mean`` by the weights arg (num_examples) or ``uniform_mean``."""
+    """``weighted_mean`` by the weights arg (num_examples) or ``uniform_mean``.
+
+    The weighted sum accumulates in float64 and is cast back to the updates'
+    dtype (T18): a no-op for the synthetic float64 tier, and it keeps Tier-1
+    torch params float32 end to end.
+    """
     if not compressed:
         raise ValueError("aggregate() needs at least one CompressionState")
     ids = [c.client_id for c in compressed]
@@ -226,7 +239,7 @@ def aggregate(
         accepted_ids=list(ids),
         rejected_ids=[],
         weights={cid: float(c) for cid, c in zip(ids, coeffs)},
-        aggregate=(coeffs[:, None] * updates).sum(axis=0),
+        aggregate=(coeffs[:, None] * updates).sum(axis=0).astype(updates.dtype, copy=False),
     )
 
 
