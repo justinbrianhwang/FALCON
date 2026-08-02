@@ -30,6 +30,23 @@ def load_ground_truth(runs_root: Path, failure_run_id: str) -> FailureSpecificat
     return _metadata(Path(runs_root), failure_run_id).failure
 
 
+def _persistent_divergence_window(
+    runs_root: Path, reference_run_id: str, failure_run_id: str
+) -> tuple[int, int] | None:
+    reference = Recorder(runs_root, reference_run_id).stage_hashes()
+    failure = Recorder(runs_root, failure_run_id).stage_hashes()
+    divergent_rounds = sorted(
+        {
+            round_id
+            for round_id, stage in reference.keys() | failure.keys()
+            if reference.get((round_id, stage)) != failure.get((round_id, stage))
+        }
+    )
+    if len(divergent_rounds) > 1:
+        return divergent_rounds[0], divergent_rounds[-1]
+    return None
+
+
 def analyze_pair(
     runs_root: Path,
     reference_run_id: str,
@@ -81,6 +98,7 @@ def analyze_pair(
             ),
             [],
         )
+    round_window: tuple[int, int] | None = None
     if rounds is None:
         chosen_round = pair.first_divergence_round
         if chosen_round is None:
@@ -99,7 +117,14 @@ def analyze_pair(
                     [],
                 )
             chosen_round = failure.failure.active_rounds[0]
-        rounds = [chosen_round]
+        failure_window = failure.failure.active_rounds if failure.failure else None
+        if failure_window and failure_window[0] < failure_window[1]:
+            round_window = failure_window
+        else:
+            round_window = _persistent_divergence_window(
+                runs_root, reference_run_id, failure_run_id
+            )
+        rounds = [round_window[0] if round_window else chosen_round]
 
     try:
         reference_outcome = Recorder(runs_root, reference_run_id).load(
@@ -151,6 +176,7 @@ def analyze_pair(
                         failure_run_id if mode == "inject" else reference_run_id
                     ),
                     round_id=round_id,
+                    round_window=round_window,
                     stage=stage,
                     mode=mode,
                 )

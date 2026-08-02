@@ -73,10 +73,18 @@ def test_analyze_pair_end_to_end(tmp_path):
     )
 
     assert report.origin_ranking[0] == ground_truth.stage
-    assert report.outcome == "unresolved"
-    assert report.origin_set == ["compression", "aggregation"]
+    assert report.outcome == "unique_origin"
+    assert report.origin_set == []
+    assert report.roles["aggregation"] == "carrier_or_amplifier"
+    assert "CARRIER_TIE_RESOLVED:aggregation" in report.notes
     assert len(interventions) == 12
-    assert all(result.valid for result in interventions)
+    assert all(result.spec.round_window == (2, 4) for result in interventions)
+    assert all(effects["window"] == 1.0 for effects in report.stage_effects.values())
+    assert {
+        (result.spec.stage, result.spec.mode)
+        for result in interventions
+        if not result.valid
+    } == {("local", "restore"), ("local", "inject")}
     assert all(
         result.outcome_metrics["sham_deviation_loss"] == pytest.approx(0.0)
         for result in interventions
@@ -94,9 +102,9 @@ def test_analyze_pair_end_to_end(tmp_path):
         "## Ground truth (benchmark)",
     ):
         assert section in markdown
-    assert "Restoring compression closes" not in markdown
-    assert "unresolved among `compression`, `aggregation`" in markdown
-    assert "Prediction matches injected stage: **unresolved**" in markdown
+    assert "Restoring compression closes 100.0%" in markdown
+    assert "tied downstream stage(s) `aggregation` carry or amplify" in markdown
+    assert "Prediction matches injected stage: **yes**" in markdown
 
     for recorder in (reference, failure):
         outcome = recorder.load(4, "evaluation")

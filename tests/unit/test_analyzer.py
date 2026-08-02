@@ -30,6 +30,7 @@ def _result(
     reason=None,
     metric="accuracy",
     round_id=1,
+    round_window=None,
 ):
     target, source = (
         ("failure", "reference") if mode != "inject" else ("reference", "failure")
@@ -39,6 +40,7 @@ def _result(
             target_run_id=target,
             source_run_id=source,
             round_id=round_id,
+            round_window=round_window,
             stage=stage,
             mode=mode,
         ),
@@ -59,6 +61,96 @@ def _attribute(pair, interventions, **kwargs):
         sham_tolerance=0.01,
         **kwargs,
     )
+
+
+@pytest.fixture
+def selection_aggregation_carrier_tie():
+    window = (1, 3)
+    return _pair("selection"), [
+        _result("selection", "restore", 0.82, round_window=window),
+        _result("selection", "inject", 0.58, round_window=window),
+        _result("selection", "sham", 0.5, round_window=window),
+        _result("aggregation", "restore", 0.82, round_window=window),
+        _result("aggregation", "inject", 0.58, round_window=window),
+    ]
+
+
+@pytest.fixture
+def zero_tie_with_negative_compression():
+    return _pair("compression"), [
+        _result("selection", "restore", 0.5),
+        _result("selection", "inject", 0.9),
+        _result("local", "restore", 0.5),
+        _result("local", "inject", 0.9),
+        _result("compression", "restore", 0.4),
+        _result("compression", "inject", 1.0),
+        _result("compression", "sham", 0.5),
+    ]
+
+
+@pytest.fixture
+def carrier_tie_with_upstream_stage():
+    return _pair("local"), [
+        _result("selection", "restore", 0.82),
+        _result("selection", "inject", 0.58),
+        _result("local", "restore", 0.82),
+        _result("local", "inject", 0.58),
+        _result("local", "sham", 0.5),
+        _result("aggregation", "restore", 0.82),
+        _result("aggregation", "inject", 0.58),
+    ]
+
+
+def test_downstream_carrier_tie_resolves_to_first_divergence(
+    selection_aggregation_carrier_tie,
+):
+    pair, interventions = selection_aggregation_carrier_tie
+    report = _attribute(pair, interventions)
+
+    assert report.outcome == "unique_origin"
+    assert report.origin_ranking[:2] == ["selection", "aggregation"]
+    assert report.roles["selection"] == "origin_candidate"
+    assert report.roles["aggregation"] == "carrier_or_amplifier"
+    assert "CARRIER_TIE_RESOLVED:aggregation" in report.notes
+    assert report.stage_effects["selection"]["window"] == 1.0
+
+    markdown = render_markdown(
+        report,
+        interventions,
+        ground_truth=FailureSpecification(
+            stage="selection", type="test", active_rounds=(1, 3)
+        ),
+    )
+    assert "tied downstream stage(s) `aggregation` carry or amplify" in markdown
+    assert "Prediction matches injected stage: **yes**" in markdown
+
+
+def test_zero_effect_bystanders_rank_below_negative_material_evidence(
+    zero_tie_with_negative_compression,
+):
+    pair, interventions = zero_tie_with_negative_compression
+    report = _attribute(pair, interventions)
+
+    assert report.outcome == "unresolved"
+    assert report.origin_ranking == ["compression", "selection", "local"]
+    assert report.roles["selection"] == report.roles["local"] == "bystander"
+    assert "NO_POSITIVE_EVIDENCE_AT_ROUND" in report.notes
+    assert "UNRESOLVED_BETWEEN:selection,local" not in report.notes
+
+    markdown = render_markdown(report, interventions, ground_truth=None)
+    assert "No positive intervention evidence was observed" in markdown
+
+
+def test_carrier_tie_with_non_downstream_stage_stays_unresolved(
+    carrier_tie_with_upstream_stage,
+):
+    pair, interventions = carrier_tie_with_upstream_stage
+    report = _attribute(pair, interventions)
+
+    assert report.outcome == "unresolved"
+    assert report.origin_set == ["local", "selection", "aggregation"]
+    assert "UNRESOLVED_BETWEEN:local,selection,aggregation" in report.notes
+    assert not any(note.startswith("CARRIER_TIE_RESOLVED:") for note in report.notes)
 
 
 def test_clean_single_stage_attribution():

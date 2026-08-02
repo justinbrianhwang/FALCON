@@ -5,6 +5,15 @@ overlay — re-run ``run(cfg)`` from round 0 and, at the intervention boundary,
 swap the produced stage state for the recorded source state, then continue
 downstream. No checkpoint restoration.
 
+Round windows (T13, Plan §13.5): ``InterventionSpecification.round_window =
+[t1, t2]`` turns the single boundary into one replay in which the stage state
+is replaced at EVERY round of the inclusive window (source = the matched
+run's recorded state for the same round; ``round_id`` is ignored). Validation
+runs per round exactly as in the single-round case; any invalid round rejects
+the whole window with ``reason`` ending in ``:<round>`` — no partial windows.
+A windowed sham round-trips the LIVE state at every window round under the
+same drift gate.
+
 Sham design (T5-F finding 2): a sham is evidence about the intervention
 machinery, not a repair tool. It (a) runs a NO-overlay replay of the target
 and requires every recorded boundary hash to match — any drift invalidates
@@ -76,54 +85,65 @@ class _InvalidIntervention(Exception):
 
 
 class _ReplacementOverlay:
-    """Runner overlay swapping one boundary state for a recorded replacement.
+    """Runner overlay swapping boundary states for recorded replacements.
 
-    Validation that needs the live computed state happens here, at the
-    boundary: array shape/dtype/finiteness (vs the live state), client
-    identity, scoped client_ids presence in BOTH live and source, and the
-    lineage-hash check. A lineage mismatch means the replacement descends
+    Holds one replacement per intervention round (a single-round spec is a
+    one-entry window). Validation that needs the live computed state happens
+    here, at each boundary: array shape/dtype/finiteness (vs the live state),
+    client identity, scoped client_ids presence in BOTH live and source, and
+    the lineage-hash check. A lineage mismatch means the replacement descends
     from a different base model — transplanting its delta is not a
     restoration of the reference stage state, so it is REJECTED with
     ``lineage_mismatch`` (T5-F finding 3), never downgraded to a warning.
+
+    ``tag_round`` (window mode, T13): any per-round validation failure is
+    re-raised with ``:<round>`` appended, so the reason names the window
+    round that rejected — a window is all-or-nothing, never partial.
     """
 
     def __init__(
         self,
-        round_id: int,
+        replacements: dict[int, object],
         stage: str,
-        replacement,
         client_ids: list[str] | None,
+        tag_round: bool = False,
     ):
-        self._round_id = round_id
+        self._replacements = replacements  # round_id -> recorded source state
         self._stage = stage
-        self._replacement = replacement
         self._client_ids = client_ids  # None => whole-stage replacement
+        self._tag_round = tag_round
         self.fired = 0
 
     def override(self, round_id: int, stage: str, state):
-        if round_id != self._round_id or stage != self._stage:
+        if round_id not in self._replacements or stage != self._stage:
             return state
         self.fired += 1
-        if stage in _LIST_STAGES:
-            return self._override_list(state)
-        return self._override_single(state)
+        replacement = self._replacements[round_id]
+        try:
+            if stage in _LIST_STAGES:
+                return self._override_list(state, replacement, round_id)
+            return self._override_single(state, replacement, round_id)
+        except _InvalidIntervention as exc:
+            if self._tag_round:
+                raise _InvalidIntervention(f"{exc}:{round_id}") from None
+            raise
 
     # --- single states: selection / aggregation / evaluation ---
 
-    def _override_single(self, live):
+    def _override_single(self, live, replacement, round_id: int):
         array_field = _ARRAY_FIELD.get(self._stage)
         if array_field is not None:
             self._check_array(
-                getattr(self._replacement, array_field),
+                getattr(replacement, array_field),
                 getattr(live, array_field),
+                round_id,
                 context=f"stage {self._stage!r}",
             )
-        return self._replacement
+        return replacement
 
     # --- list states: local / compression ---
 
-    def _override_list(self, live: list) -> list:
-        source = self._replacement
+    def _override_list(self, live: list, source: list, round_id: int) -> list:
         live_by_id = {state.client_id: state for state in live}
         source_by_id = {state.client_id: state for state in source}
 
@@ -134,7 +154,7 @@ class _ReplacementOverlay:
                 raise _InvalidIntervention(
                     f"client_mismatch: source client_ids {source_ids} do not "
                     f"match live client_ids {live_ids} at round "
-                    f"{self._round_id} stage {self._stage!r}"
+                    f"{round_id} stage {self._stage!r}"
                 )
             replaced_ids = live_ids
         else:
@@ -146,7 +166,7 @@ class _ReplacementOverlay:
             if missing:
                 raise _InvalidIntervention(
                     f"scoped_clients_missing: client_ids {missing} not present "
-                    f"in BOTH live and source state at round {self._round_id} "
+                    f"in BOTH live and source state at round {round_id} "
                     f"stage {self._stage!r}"
                 )
             replaced_ids = self._client_ids
@@ -157,6 +177,7 @@ class _ReplacementOverlay:
             self._check_array(
                 getattr(source_entry, _ARRAY_FIELD[self._stage]),
                 getattr(live_entry, _ARRAY_FIELD[self._stage]),
+                round_id,
                 context=f"stage {self._stage!r} client {cid!r}",
             )
             lineage_field = _LINEAGE_FIELD[self._stage]
@@ -166,7 +187,7 @@ class _ReplacementOverlay:
                 # lineage is not a restoration of this stage state (finding 3)
                 raise _InvalidIntervention(
                     f"lineage_mismatch: {lineage_field} of client {cid!r} does "
-                    f"not match the live replay at round {self._round_id} "
+                    f"not match the live replay at round {round_id} "
                     f"stage {self._stage!r}"
                 )
 
@@ -178,23 +199,23 @@ class _ReplacementOverlay:
             for state in live
         ]
 
-    def _check_array(self, source_array, live_array, context: str) -> None:
+    def _check_array(self, source_array, live_array, round_id: int, context: str) -> None:
         source = np.asarray(source_array)
         live = np.asarray(live_array)
         if source.shape != live.shape:
             raise _InvalidIntervention(
                 f"shape_mismatch: source shape {tuple(source.shape)} != live "
-                f"shape {tuple(live.shape)} at round {self._round_id} {context}"
+                f"shape {tuple(live.shape)} at round {round_id} {context}"
             )
         if source.dtype != live.dtype:
             raise _InvalidIntervention(
                 f"dtype_mismatch: source dtype {source.dtype} != live dtype "
-                f"{live.dtype} at round {self._round_id} {context}"
+                f"{live.dtype} at round {round_id} {context}"
             )
         if not np.all(np.isfinite(source)):
             raise _InvalidIntervention(
                 f"non_finite_state: source array contains non-finite values "
-                f"at round {self._round_id} {context}"
+                f"at round {round_id} {context}"
             )
 
 
@@ -204,38 +225,40 @@ class _ShamOverlay:
     The recorded target state is NEVER overlaid (T5-F finding 2): swapping in
     recorded content would repair replay drift at the intervention boundary
     and make ``sham_deviation_* == 0`` tautological. Round-tripping the live
-    state tests only serialization fidelity. ``live_state`` captures the
-    pre-overlay boundary so an evaluation-stage sham can compare the
-    RECOMPUTED outcome against the recording instead of the self-replaced one.
+    state tests only serialization fidelity. ``live_states`` captures the
+    pre-overlay boundary per intervention round so an evaluation-stage sham
+    can compare the RECOMPUTED outcome against the recording instead of the
+    self-replaced one. With a round window (T13) the round-trip happens at
+    EVERY round in the window, under the same drift gate.
     """
 
-    def __init__(self, round_id: int, stage: str, client_ids: list[str] | None):
-        self._round_id = round_id
+    def __init__(self, rounds, stage: str, client_ids: list[str] | None):
+        self._rounds = frozenset(rounds)
         self._stage = stage
         self._client_ids = client_ids  # None => whole-stage round-trip
         self.fired = 0
-        self.live_state = None
+        self.live_states: dict[int, object] = {}
 
     def override(self, round_id: int, stage: str, state):
-        if round_id != self._round_id or stage != self._stage:
+        if round_id not in self._rounds or stage != self._stage:
             return state
         self.fired += 1
-        self.live_state = state
+        self.live_states[round_id] = state
         if stage in _LIST_STAGES:
-            return self._round_trip_list(state)
+            return self._round_trip_list(state, round_id)
         return _round_trip_through_serialization(state, round_id, stage)
 
-    def _round_trip_list(self, live: list) -> list:
+    def _round_trip_list(self, live: list, round_id: int) -> list:
         if self._client_ids is not None:
             live_ids = {state.client_id for state in live}
             missing = [cid for cid in self._client_ids if cid not in live_ids]
             if missing:
                 raise _InvalidIntervention(
                     f"scoped_clients_missing: client_ids {missing} not present "
-                    f"in the live state at round {self._round_id} "
+                    f"in the live state at round {round_id} "
                     f"stage {self._stage!r}"
                 )
-        tripped = _round_trip_through_serialization(live, self._round_id, self._stage)
+        tripped = _round_trip_through_serialization(live, round_id, self._stage)
         if self._client_ids is None:
             return tripped
         tripped_by_id = {state.client_id: state for state in tripped}
@@ -423,10 +446,40 @@ def _check_replay_fidelity(cfg: RunConfig, target_recorder: Recorder) -> str | N
     return None
 
 
+def _load_and_validate(
+    recorder: Recorder,
+    run_id: str,
+    round_id: int,
+    stage: str,
+    role: str,
+    tag_round: bool,
+):
+    """Load one recorded boundary and validate it; window mode tags the round.
+
+    With ``tag_round`` (window mode, T13) any failure is re-raised with
+    ``:<round>`` appended, so the reason names the window round whose
+    recording rejected the whole spec.
+    """
+    try:
+        state = _load_recorded(recorder, run_id, round_id, stage, role)
+        _validate_loaded_state(state, stage, role, run_id, round_id)
+    except _InvalidIntervention as exc:
+        if tag_round:
+            raise _InvalidIntervention(f"{exc}:{round_id}") from None
+        raise
+    return state
+
+
 def apply_intervention(
     spec: InterventionSpecification, runs_root: Path
 ) -> InterventionResult:
     """Apply ``spec`` and re-execute the target run with the boundary replaced.
+
+    With ``spec.round_window = [t1, t2]`` (T13, Plan §13.5) the replacement
+    happens at EVERY round in the inclusive window (``round_id`` is ignored):
+    one replay, per-round recorded source states, per-round validation as in
+    the single-round case. Any invalid round rejects the whole intervention
+    (``reason`` ends with ``:<round>``) — no partial windows.
 
     All validation failures return ``InterventionResult(valid=False,
     reason=...)`` — this function never raises for them.
@@ -441,21 +494,31 @@ def apply_intervention(
 
         target_metadata = _load_run_metadata(runs_root, spec.target_run_id, "target")
         cfg = _run_config_from_metadata(target_metadata, "target")
-        if not 0 <= spec.round_id < cfg.rounds:
-            raise _InvalidIntervention(
-                f"invalid_round_id: round_id {spec.round_id} out of range for "
-                f"a run with {cfg.rounds} rounds"
-            )
+        window = spec.round_window
+        if window is not None:
+            t1, t2 = window
+            if t1 < 0 or t1 > t2 or t2 >= cfg.rounds:
+                raise _InvalidIntervention(
+                    f"invalid_round_window: round_window {t1}:{t2} out of range "
+                    f"for a run with {cfg.rounds} rounds"
+                )
+            rounds = list(range(t1, t2 + 1))
+        else:
+            if not 0 <= spec.round_id < cfg.rounds:
+                raise _InvalidIntervention(
+                    f"invalid_round_id: round_id {spec.round_id} out of range for "
+                    f"a run with {cfg.rounds} rounds"
+                )
+            rounds = [spec.round_id]
 
-        # the target must have recorded the intervention boundary, as the
-        # stage's state type, and under the requested round
+        # the target must have recorded every intervention boundary, as the
+        # stage's state type, and under the requested round(s)
         target_recorder = _make_recorder(runs_root, spec.target_run_id, "target")
-        target_state = _load_recorded(
-            target_recorder, spec.target_run_id, spec.round_id, spec.stage, "target"
-        )
-        _validate_loaded_state(
-            target_state, spec.stage, "target", spec.target_run_id, spec.round_id
-        )
+        for round_id in rounds:
+            _load_and_validate(
+                target_recorder, spec.target_run_id, round_id, spec.stage,
+                "target", window is not None,
+            )
 
         if spec.mode in ("restore", "inject"):
             # identical machinery; the direction lives in which run is
@@ -465,14 +528,15 @@ def apply_intervention(
             if incompatible is not None:
                 raise _InvalidIntervention(incompatible)
             source_recorder = _make_recorder(runs_root, spec.source_run_id, "source")
-            replacement = _load_recorded(
-                source_recorder, spec.source_run_id, spec.round_id, spec.stage, "source"
-            )
-            _validate_loaded_state(
-                replacement, spec.stage, "source", spec.source_run_id, spec.round_id
-            )
+            replacements = {
+                round_id: _load_and_validate(
+                    source_recorder, spec.source_run_id, round_id, spec.stage,
+                    "source", window is not None,
+                )
+                for round_id in rounds
+            }
             overlay = _ReplacementOverlay(
-                spec.round_id, spec.stage, replacement, client_ids
+                replacements, spec.stage, client_ids, tag_round=window is not None
             )
         else:  # sham: source_run_id ignored content-wise (Plan §12.4)
             # (a) the unmodified replay must first prove itself drift-free
@@ -480,29 +544,33 @@ def apply_intervention(
             if drift is not None:
                 raise _InvalidIntervention(drift)
             # (b) then the LIVE boundary — never the recorded one — is
-            # round-tripped through serialization and overlaid
-            overlay = _ShamOverlay(spec.round_id, spec.stage, client_ids)
+            # round-tripped through serialization and overlaid, at every
+            # intervention round
+            overlay = _ShamOverlay(rounds, spec.stage, client_ids)
 
         outcomes = _run_translated(cfg, overlay=overlay)
-        if overlay.fired != 1:
+        if overlay.fired != len(rounds):
             raise _InvalidIntervention(
                 f"overlay_misfire: overlay fired {overlay.fired} times at "
-                f"round {spec.round_id} stage {spec.stage!r}, expected exactly once"
+                f"round(s) {rounds} stage {spec.stage!r}, expected {len(rounds)}"
             )
 
-        # final round's metrics plus "round_<t>_<metric>" for the intervention round
+        # final round's metrics plus "round_<t>_<metric>" per boundary round
+        # (single round: the intervention round; window: t1 and t2)
         outcome_metrics: dict[str, float] = dict(outcomes[-1].metrics)
-        for key, value in outcomes[spec.round_id].metrics.items():
-            outcome_metrics[f"round_{spec.round_id}_{key}"] = value
+        boundary_rounds = rounds if window is None else sorted({rounds[0], rounds[-1]})
+        for round_id in boundary_rounds:
+            for key, value in outcomes[round_id].metrics.items():
+                outcome_metrics[f"round_{round_id}_{key}"] = value
         if spec.mode == "sham":
             # a sham must reproduce the unmodified target run; report the deviation
             if spec.stage == "evaluation":
                 # (c) self-replacing the outcome is tautological: compare the
                 # RECOMPUTED (pre-overlay) outcome against the recording at
-                # the intervention round instead
-                recomputed = overlay.live_state
+                # the first intervention round instead
+                recomputed = overlay.live_states[rounds[0]]
                 recorded_at_round = _load_recorded(
-                    target_recorder, spec.target_run_id, spec.round_id, spec.stage, "target"
+                    target_recorder, spec.target_run_id, rounds[0], spec.stage, "target"
                 )
                 for key, value in recomputed.metrics.items():
                     outcome_metrics[f"sham_deviation_{key}"] = (

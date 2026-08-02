@@ -66,7 +66,10 @@ def attribute(
         )
 
     notes: list[str] = []
-    grouped: dict[str, dict[str, dict[int, InterventionResult]]] = {}
+    grouped: dict[
+        str,
+        dict[str, dict[tuple[int, tuple[int, int] | None], InterventionResult]],
+    ] = {}
     for result in interventions:
         stage, mode, round_id = (
             result.spec.stage,
@@ -77,7 +80,9 @@ def attribute(
         if not result.valid or value is None or not isfinite(value):
             notes.append(f"INVALID_INTERVENTION:{stage}:{mode}")
             continue
-        grouped.setdefault(stage, {}).setdefault(mode, {})[round_id] = result
+        grouped.setdefault(stage, {}).setdefault(mode, {})[
+            (round_id, result.spec.round_window)
+        ] = result
 
     if not isfinite(gap):
         notes.append("INSUFFICIENT_FAILURE_GAP")
@@ -102,11 +107,17 @@ def attribute(
             continue
 
         effect_rounds = {
-            round_id
+            intervention
             for mode_results in results.values()
-            for round_id in mode_results
+            for intervention in mode_results
         }
         effects: dict[str, float] = {"n_rounds": float(len(effect_rounds))}
+        if any(
+            result.spec.round_window is not None
+            for mode_results in results.values()
+            for result in mode_results.values()
+        ):
+            effects["window"] = 1.0
         restores = [
             result.outcome_metrics[metric]
             for result in results.get("restore", {}).values()
@@ -219,9 +230,20 @@ def attribute(
         )
 
     stage_order = {stage: index for index, stage in enumerate(STAGES)}
+    first = pair.first_divergence_stage
+    material = {
+        stage
+        for stage, effects in stage_effects.items()
+        if abs(effects.get("nSRE", 0.0)) >= bystander_threshold
+        or abs(effects.get("nSIE", 0.0)) >= bystander_threshold
+    }
+    bystanders = {
+        stage for stage in scores if stage != first and stage not in material
+    }
     ranking = sorted(
         scores,
         key=lambda stage: (
+            stage in bystanders,
             -scores[stage],
             stage not in bidirectional,
             stage_order[stage],
@@ -236,12 +258,15 @@ def attribute(
         ]
         ranking[: len(tied)] = sorted(
             tied,
-            key=lambda stage: (stage not in bidirectional, stage_order[stage]),
+            key=lambda stage: (
+                stage in bystanders,
+                stage not in bidirectional,
+                stage_order[stage],
+            ),
         )
 
-    first = pair.first_divergence_stage
     if ranking and first in scores:
-        max_score = max(scores.values())
+        max_score = scores[ranking[0]]
         if max_score - scores[first] <= decisive_margin + epsilon_tie:
             ranking.remove(first)
             ranking.insert(0, first)
@@ -250,12 +275,22 @@ def attribute(
         [
             stage
             for stage in ranking
-            if abs(scores[ranking[0]] - scores[stage]) <= epsilon_tie
+            if stage not in bystanders
+            and abs(scores[ranking[0]] - scores[stage])
+            <= decisive_margin + epsilon_tie
         ]
         if ranking
         else []
     )
-    if len(tied) > 1:
+    downstream_tie = (
+        len(tied) > 1
+        and first in tied
+        and all(
+            stage == first or stage_order[stage] > stage_order[first]
+            for stage in tied
+        )
+    )
+    if len(tied) > 1 and not downstream_tie:
         notes.append(f"UNRESOLVED_BETWEEN:{','.join(tied)}")
 
     for stage in ranking:
@@ -267,21 +302,37 @@ def attribute(
     if no_sham_controls:
         notes.append("NO_SHAM_CONTROLS")
 
-    all_negligible = bool(ranking) and all(
-        abs(scores[stage]) < bystander_threshold for stage in ranking
+    all_negligible = bool(ranking) and not material
+    negative_dominated = (
+        bool(material) and max(scores[stage] for stage in material) <= 0
     )
-    unresolved = len(tied) > 1 or no_sham_controls or all_negligible or not ranking
+    if negative_dominated:
+        notes.append("NO_POSITIVE_EVIDENCE_AT_ROUND")
+    unresolved = (
+        (len(tied) > 1 and not downstream_tie)
+        or no_sham_controls
+        or all_negligible
+        or negative_dominated
+        or not ranking
+    )
     if unresolved:
         origin_set = tied or ranking
         outcome = "unresolved"
     else:
         origin_set = []
         outcome = "unique_origin"
+        if downstream_tie:
+            carriers = sorted(
+                (stage for stage in tied if stage != first), key=stage_order.get
+            )
+            notes.append(f"CARRIER_TIE_RESOLVED:{','.join(carriers)}")
 
     roles: dict[str, str] = {}
     for index, stage in enumerate(ranking):
         score = scores[stage]
-        if outcome == "unique_origin" and index == 0:
+        if stage in bystanders:
+            roles[stage] = "bystander"
+        elif outcome == "unique_origin" and index == 0:
             roles[stage] = "origin_candidate"
         elif stage in origin_set:
             roles[stage] = "unresolved_candidate"

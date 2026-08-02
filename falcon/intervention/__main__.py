@@ -4,6 +4,11 @@ Example:
     python -m falcon.intervention --runs-root runs --target-run fail_001 \
         --source-run ref_001 --round 1 --stage compression --mode restore \
         [--client-ids a,b] [--json out.json]
+
+    # windowed intervention (T13, Plan §13.5), inclusive rounds t1..t2:
+    python -m falcon.intervention --runs-root runs --target-run fail_001 \
+        --source-run ref_001 --round-window 2:9 --stage compression \
+        --mode restore
 """
 
 from __future__ import annotations
@@ -18,6 +23,18 @@ from .engine import apply_intervention
 _MODES = ("restore", "inject", "sham")
 
 
+def _parse_round_window(text: str) -> tuple[int, int]:
+    """Parse ``t1:t2`` into an inclusive ``(t1, t2)`` round window."""
+    try:
+        start, end = text.split(":")
+        window = (int(start), int(end))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--round-window must be T1:T2 with integer rounds, got {text!r}"
+        ) from None
+    return window
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Apply a FALCON stage intervention and replay the run"
@@ -30,7 +47,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--target-run", required=True, help="run to re-execute")
     parser.add_argument("--source-run", required=True, help="run supplying the replacement state")
-    parser.add_argument("--round", type=int, required=True, dest="round_id")
+    round_group = parser.add_mutually_exclusive_group(required=True)
+    round_group.add_argument(
+        "--round", type=int, dest="round_id",
+        help="single intervention round",
+    )
+    round_group.add_argument(
+        "--round-window", type=_parse_round_window, dest="round_window",
+        metavar="T1:T2",
+        help="inclusive intervention round window (T13); replaces --round",
+    )
     parser.add_argument("--stage", required=True, choices=list(STAGES))
     parser.add_argument("--mode", required=True, choices=list(_MODES))
     parser.add_argument(
@@ -51,7 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     spec = InterventionSpecification(
         target_run_id=args.target_run,
         source_run_id=args.source_run,
-        round_id=args.round_id,
+        # schema keeps round_id required; it is ignored when round_window is set
+        round_id=args.round_id if args.round_window is None else args.round_window[0],
+        round_window=args.round_window,
         stage=args.stage,
         mode=args.mode,
         scope=scope,
