@@ -200,11 +200,31 @@ def aggregate(
     cfg: AggregationConfig,
     rng: "Rng",
 ) -> AggregationState:
-    """``weighted_mean`` by the weights arg (num_examples) or ``uniform_mean``.
+    """Combine client updates into one flat update; four rules (CONTRACTS §1).
 
-    The weighted sum accumulates in float64 and is cast back to the updates'
-    dtype (T18): a no-op for the synthetic float64 tier, and it keeps Tier-1
-    torch params float32 end to end.
+    ``weighted_mean`` weights by the ``weights`` arg (num_examples);
+    ``uniform_mean`` averages all received updates equally. ``median`` and
+    ``trimmed_mean`` (T21, E5 prerequisites — Plan §4.4/§18.4) are
+    coordinate-wise and unweighted BY DEFINITION: the ``weights`` arg is
+    ignored entirely (never validated) and ``AggregationState.weights``
+    records the nominal uniform 1/n per received client — the actually-used
+    weighting. Both robust rules act per coordinate and never reject whole
+    clients, so ``accepted_ids == received_ids`` and ``rejected_ids == []``.
+
+    Conventions:
+    - ``median``: numpy's standard midpoint average — for an even client
+      count each coordinate's median is the mean of its two middle values.
+    - ``trimmed_mean``: ``beta = cfg.parameters.get("beta", 0.1)``, validated
+      to ``0 <= beta < 0.5``; ``k = floor(beta * n)`` values are dropped
+      from each end of EACH coordinate (np.sort orders by value, so the
+      result never depends on client order or ties) and the remaining
+      ``n - 2k`` values are averaged. AggregationState has no rule-parameters
+      field, so beta is recorded only with the run config
+      (``RunMetadata.config.aggregation.parameters.beta``) — documented here.
+
+    All rules are deterministic (no RNG) and accumulate in float64, cast
+    back to the updates' dtype (T18): a no-op for the synthetic float64
+    tier, and it keeps Tier-1 torch params float32 end to end.
     """
     if not compressed:
         raise ValueError("aggregate() needs at least one CompressionState")
@@ -212,6 +232,8 @@ def aggregate(
     if len(set(ids)) != len(ids):
         raise ValueError(f"aggregate() got duplicate client ids: {ids}")
     updates = np.stack([c.update for c in compressed])
+    updates64 = np.asarray(updates, dtype=np.float64)  # float64 accumulation (T18)
+    uniform = np.full(len(ids), 1.0 / len(ids), dtype=np.float64)
     if cfg.rule == "weighted_mean":
         missing = sorted(set(ids) - set(weights))
         extra = sorted(set(weights) - set(ids))
@@ -229,8 +251,22 @@ def aggregate(
         if total <= 0.0:
             raise ValueError("total weight must be positive")
         coeffs = raw / total
+        combined = (coeffs[:, None] * updates64).sum(axis=0)
     elif cfg.rule == "uniform_mean":
-        coeffs = np.full(len(ids), 1.0 / len(ids), dtype=np.float64)
+        coeffs = uniform
+        combined = (coeffs[:, None] * updates64).sum(axis=0)
+    elif cfg.rule == "median":
+        coeffs = uniform
+        combined = np.median(updates64, axis=0)
+    elif cfg.rule == "trimmed_mean":
+        beta = float(cfg.parameters.get("beta", 0.1))
+        if not math.isfinite(beta) or not 0.0 <= beta < 0.5:
+            raise ValueError(f"trimmed_mean beta must be in [0, 0.5), got {beta}")
+        n = updates64.shape[0]
+        k = int(math.floor(beta * n))
+        kept = np.sort(updates64, axis=0, kind="stable")[k : n - k]
+        coeffs = uniform
+        combined = kept.mean(axis=0)
     else:
         raise NotImplementedError(f"aggregation rule {cfg.rule!r} not implemented yet")
     return AggregationState(
@@ -239,7 +275,7 @@ def aggregate(
         accepted_ids=list(ids),
         rejected_ids=[],
         weights={cid: float(c) for cid, c in zip(ids, coeffs)},
-        aggregate=(coeffs[:, None] * updates).sum(axis=0).astype(updates.dtype, copy=False),
+        aggregate=combined.astype(updates.dtype, copy=False),
     )
 
 

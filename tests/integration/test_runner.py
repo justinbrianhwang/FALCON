@@ -67,6 +67,26 @@ def test_two_runs_identical(cfg):
     assert [o.per_class for o in a] == [o.per_class for o in b]
 
 
+def test_median_rule_run_deterministic_and_learns(cfg):
+    """T21: synthetic reference run with rule ``median`` (E5 prerequisite).
+
+    Completes all rounds, two runs are bit-identical (model hashes and
+    metrics), and clean-run accuracy stays in a sane band — measured ~0.79
+    on this fixture, comparable to the weighted_mean reference.
+    """
+    median_cfg = cfg.model_copy(update={"aggregation": AggregationConfig(rule="median")})
+    a = run(median_cfg, rng=Rng(median_cfg.seed))
+    b = run(median_cfg, rng=Rng(median_cfg.seed))
+    assert len(a) == median_cfg.rounds
+    assert [o.model_hash for o in a] == [o.model_hash for o in b]
+    assert [o.metrics for o in a] == [o.metrics for o in b]
+    losses = [o.metrics["loss"] for o in a]
+    assert all(np.isfinite(losses))
+    assert losses[-1] < losses[0]
+    accuracy = a[-1].metrics["accuracy"]
+    assert 0.6 < accuracy < 0.95
+
+
 def test_default_rng_matches_injected_rng(cfg):
     """run(cfg) must default to Rng(cfg.seed) (blessed signature, CONTRACTS §1)."""
     assert [o.model_hash for o in run(cfg)] == [

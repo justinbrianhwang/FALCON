@@ -180,11 +180,191 @@ def test_aggregate_uniform_mean():
     assert state.weights == {"client_a": pytest.approx(0.5), "client_b": pytest.approx(0.5)}
 
 
-def test_aggregate_other_rules_not_implemented():
-    compressed = [_compressed("client_a", np.zeros(6))]
-    for rule in ("median", "trimmed_mean"):
-        with pytest.raises(NotImplementedError):
-            aggregate(compressed, {"client_a": 1.0}, AggregationConfig(rule=rule), StubRng(9))
+# --- median / trimmed_mean robust rules (T21) ---
+
+
+def test_aggregate_median_odd_count_hand_computed():
+    u1 = np.array([1.0, -2.0, 0.5, 3.0, 0.0, -1.0])
+    u2 = np.array([-1.0, 2.0, 1.5, -3.0, 2.0, 1.0])
+    u3 = np.array([0.0, 0.0, -0.5, 1.0, -2.0, 4.0])
+    compressed = [
+        _compressed("client_a", u1),
+        _compressed("client_b", u2),
+        _compressed("client_c", u3),
+    ]
+    cfg = AggregationConfig(rule="median")
+    state = aggregate(compressed, {}, cfg, StubRng(9))
+    # per-coordinate middle values of the sorted triples:
+    # [-1,0,1]->0, [-2,0,2]->0, [-0.5,0.5,1.5]->0.5, [-3,1,3]->1, [-2,0,2]->0, [-1,1,4]->1
+    expected = np.array([0.0, 0.0, 0.5, 1.0, 0.0, 1.0])
+    np.testing.assert_array_equal(state.aggregate, expected)
+    # unweighted by definition: recorded weights are the nominal uniform 1/n
+    assert state.weights == {
+        cid: pytest.approx(1.0 / 3.0) for cid in ("client_a", "client_b", "client_c")
+    }
+    assert state.received_ids == ["client_a", "client_b", "client_c"]
+    assert state.accepted_ids == ["client_a", "client_b", "client_c"]
+    assert state.rejected_ids == []
+    assert state.round_id == 0
+
+
+def test_aggregate_median_even_count_is_midpoint_average():
+    """numpy convention (documented): even count -> mean of the two middle values."""
+    u1 = np.array([1.0, -2.0, 0.5, 3.0, 0.0, -1.0])
+    u2 = np.array([-1.0, 2.0, 1.5, -3.0, 2.0, 1.0])
+    compressed = [_compressed("client_a", u1), _compressed("client_b", u2)]
+    cfg = AggregationConfig(rule="median")
+    state = aggregate(compressed, {}, cfg, StubRng(9))
+    np.testing.assert_array_equal(state.aggregate, 0.5 * (u1 + u2))
+    assert state.weights == {
+        "client_a": pytest.approx(0.5),
+        "client_b": pytest.approx(0.5),
+    }
+
+
+def test_aggregate_median_ignores_weights_arg():
+    """Median is unweighted: no coverage/finiteness validation of weights."""
+    u1 = np.array([1.0, -2.0, 0.5, 3.0, 0.0, -1.0])
+    u2 = np.array([-1.0, 2.0, 1.5, -3.0, 2.0, 1.0])
+    compressed = [_compressed("client_a", u1), _compressed("client_b", u2)]
+    cfg = AggregationConfig(rule="median")
+    expected = 0.5 * (u1 + u2)
+    for weights in (
+        {},
+        {"client_a": 99.0, "client_b": 1.0},
+        {"unrelated": float("nan")},
+    ):
+        state = aggregate(compressed, weights, cfg, StubRng(9))
+        np.testing.assert_array_equal(state.aggregate, expected)
+
+
+def test_aggregate_median_deterministic_and_client_order_independent():
+    u1 = np.array([1.0, -2.0, 0.5, 3.0, 0.0, -1.0])
+    u2 = np.array([-1.0, 2.0, 1.5, -3.0, 2.0, 1.0])
+    u3 = np.array([0.0, 0.0, -0.5, 1.0, -2.0, 4.0])
+    cfg = AggregationConfig(rule="median")
+    a = aggregate(
+        [_compressed("client_a", u1), _compressed("client_b", u2), _compressed("client_c", u3)],
+        {},
+        cfg,
+        StubRng(9),
+    )
+    b = aggregate(
+        [_compressed("client_a", u1), _compressed("client_b", u2), _compressed("client_c", u3)],
+        {},
+        cfg,
+        StubRng(9),
+    )
+    permuted = aggregate(
+        [_compressed("client_c", u3), _compressed("client_a", u1), _compressed("client_b", u2)],
+        {},
+        cfg,
+        StubRng(9),
+    )
+    assert np.array_equal(a.aggregate, b.aggregate)  # bit-identical repeat
+    assert np.array_equal(a.aggregate, permuted.aggregate)  # value-sorted, order-free
+
+
+def test_aggregate_trimmed_mean_hand_computed_per_coordinate():
+    """n=5, beta=0.2 -> k = floor(0.2*5) = 1 value dropped per side PER COORDINATE.
+
+    The 100.0 outlier rides a different client on every coordinate, proving
+    the trim is per coordinate and rejects no whole client.
+    """
+    ids = [f"client_{i}" for i in range(5)]
+    updates = [
+        np.array([100.0, 1.0, -5.0, 0.0, 2.0, 7.0]),
+        np.array([2.0, 100.0, 2.0, 1.0, 4.0, 8.0]),
+        np.array([3.0, 3.0, 3.0, 100.0, 6.0, 9.0]),
+        np.array([4.0, 4.0, 4.0, 4.0, 8.0, 100.0]),
+        np.array([5.0, 5.0, 5.0, 5.0, 10.0, 11.0]),
+    ]
+    compressed = [_compressed(cid, u) for cid, u in zip(ids, updates)]
+    cfg = AggregationConfig(rule="trimmed_mean", parameters={"beta": 0.2})
+    state = aggregate(compressed, {}, cfg, StubRng(9))
+    # coord0: [2,3,4,5,100]->mean(3,4,5)=4;  coord1: [1,3,4,5,100]->4;
+    # coord2: [-5,2,3,4,5]->3;  coord3: [0,1,4,5,100]->10/3;
+    # coord4: [2,4,6,8,10]->6;  coord5: [7,8,9,11,100]->28/3
+    expected = np.array([4.0, 4.0, 3.0, 10.0 / 3.0, 6.0, 28.0 / 3.0])
+    np.testing.assert_allclose(state.aggregate, expected, rtol=0, atol=1e-15)
+    assert state.accepted_ids == ids
+    assert state.rejected_ids == []
+    assert state.weights == {cid: pytest.approx(0.2) for cid in ids}
+
+
+def test_aggregate_trimmed_mean_beta_zero_equals_uniform_mean():
+    ids = ["client_a", "client_b", "client_c"]
+    updates = [
+        np.array([1.0, -2.0, 0.5, 3.0, 0.0, -1.0]),
+        np.array([-1.0, 2.0, 1.5, -3.0, 2.0, 1.0]),
+        np.array([0.0, 0.0, -0.5, 1.0, -2.0, 4.0]),
+    ]
+    compressed = [_compressed(cid, u) for cid, u in zip(ids, updates)]
+    cfg = AggregationConfig(rule="trimmed_mean", parameters={"beta": 0.0})
+    state = aggregate(compressed, {}, cfg, StubRng(9))
+    np.testing.assert_allclose(
+        state.aggregate, np.stack(updates).mean(axis=0), rtol=0, atol=1e-15
+    )
+
+
+def test_aggregate_trimmed_mean_default_beta_is_point_one():
+    """No parameters -> beta=0.1; n=10 -> k = floor(0.1*10) = 1 per side."""
+    ids = [f"client_{i}" for i in range(10)]
+    updates = [np.full(6, float(i)) for i in range(10)]  # coord value = client index
+    compressed = [_compressed(cid, u) for cid, u in zip(ids, updates)]
+    state = aggregate(compressed, {}, AggregationConfig(rule="trimmed_mean"), StubRng(9))
+    # per coordinate: values 0..9, drop 0 and 9 -> mean(1..8) = 4.5
+    np.testing.assert_array_equal(state.aggregate, np.full(6, 4.5))
+
+
+def test_aggregate_trimmed_mean_beta_just_below_half_keeps_middle_value():
+    """beta=0.49, n=5 -> k = floor(2.45) = 2 per side -> only the median survives."""
+    ids = [f"client_{i}" for i in range(5)]
+    updates = [np.full(6, v) for v in (10.0, 1.0, 3.0, 7.0, 5.0)]
+    compressed = [_compressed(cid, u) for cid, u in zip(ids, updates)]
+    cfg = AggregationConfig(rule="trimmed_mean", parameters={"beta": 0.49})
+    state = aggregate(compressed, {}, cfg, StubRng(9))
+    np.testing.assert_array_equal(state.aggregate, np.full(6, 5.0))
+
+
+@pytest.mark.parametrize("beta", [-0.1, 0.5, 0.9, float("nan"), float("inf")])
+def test_aggregate_trimmed_mean_rejects_out_of_range_beta(beta):
+    compressed = [_compressed("client_a", np.ones(6)), _compressed("client_b", np.ones(6))]
+    cfg = AggregationConfig(rule="trimmed_mean", parameters={"beta": beta})
+    with pytest.raises(ValueError, match="beta"):
+        aggregate(compressed, {}, cfg, StubRng(9))
+
+
+def test_aggregate_trimmed_mean_deterministic_and_client_order_independent():
+    """Duplicate values exercise the stable value-sort: ties never make the
+    result depend on client order."""
+    ids = [f"client_{i}" for i in range(5)]
+    updates = [np.full(6, v) for v in (2.0, 2.0, 1.0, 3.0, 2.0)]
+    cfg = AggregationConfig(rule="trimmed_mean", parameters={"beta": 0.2})
+    forward = aggregate([_compressed(cid, u) for cid, u in zip(ids, updates)], {}, cfg, StubRng(9))
+    repeat = aggregate([_compressed(cid, u) for cid, u in zip(ids, updates)], {}, cfg, StubRng(9))
+    reversed_ = aggregate(
+        [_compressed(cid, u) for cid, u in zip(ids[::-1], updates[::-1])], {}, cfg, StubRng(9)
+    )
+    # sorted [1,2,2,2,3], k=1 -> kept [2,2,2] -> 2.0 regardless of order
+    np.testing.assert_array_equal(forward.aggregate, np.full(6, 2.0))
+    assert np.array_equal(forward.aggregate, repeat.aggregate)
+    assert np.array_equal(forward.aggregate, reversed_.aggregate)
+
+
+@pytest.mark.parametrize("rule", ["median", "trimmed_mean"])
+def test_aggregate_robust_rules_preserve_float32_dtype(rule):
+    """Tier-1 contract (T18): float32 updates aggregate to float32."""
+    updates = [
+        np.array([1.0, -2.0, 0.5, 3.0, 0.0, -1.0], dtype=np.float32),
+        np.array([-1.0, 2.0, 1.5, -3.0, 2.0, 1.0], dtype=np.float32),
+        np.array([0.0, 0.0, -0.5, 1.0, -2.0, 4.0], dtype=np.float32),
+    ]
+    ids = ["client_a", "client_b", "client_c"]
+    compressed = [_compressed(cid, u) for cid, u in zip(ids, updates)]
+    state = aggregate(compressed, {}, AggregationConfig(rule=rule), StubRng(9))
+    assert state.aggregate.dtype == np.float32
+    assert state.aggregate.shape == updates[0].shape
 
 
 def test_evaluate_on_separable_data():
