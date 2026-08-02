@@ -34,6 +34,8 @@ class DatasetConfig(BaseModel):
     num_classes: int = 2
     samples_per_client: int = 100
     heterogeneity: float = 0.0  # 0 = IID; larger = more client shift
+    class_separation: float = 1.0  # cluster-mean distance / noise scale; lower = harder task
+    label_noise: float = 0.0  # fraction of training labels flipped (deterministic from seed)
     minority_class: Optional[int] = None
     minority_client_fraction: float = 0.2
     seed: int = 1001  # partition seed, independent of run seed
