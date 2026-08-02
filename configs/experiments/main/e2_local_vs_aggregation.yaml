@@ -1,0 +1,105 @@
+# E2 pair B: local vs aggregation, gap-matched. Own reference (2 clients/round —
+# aggregation weight corruption renormalizes away at 5/round). Pair A = e1_seeds.yaml.
+seeds:
+- 1
+- 2
+- 3
+- 4
+- 5
+experiment:
+  case_id: main_e2b
+  metric: loss
+  higher_is_better: false
+  target_gap: 0.02
+  gap_tolerance: 0.006
+  max_iterations: 8
+  min_gap: 0.005
+  sham_tolerance: 1.0e-09
+  reference:
+    rounds: 10
+    dataset:
+      name: synthetic
+      num_clients: 10
+      num_features: 20
+      num_classes: 2
+      samples_per_client: 100
+      heterogeneity: 0.0
+      class_separation: 0.4
+      label_noise: 0.1
+      minority_class: 1
+      minority_client_fraction: 0.2
+      seed: 1001
+    selection:
+      clients_per_round: 2
+    local:
+      lr: 0.05
+      local_steps: 3
+      batch_size: 32
+    compression:
+      kind: identity
+    aggregation:
+      rule: weighted_mean
+  failures:
+  - id: local_lr_misconfig
+    stage: local
+    type: lr_misconfig
+    active_rounds:
+    - 2
+    - 9
+    parameters:
+      fraction: 0.5
+    severity:
+      parameter: lr_multiplier
+      bounds:
+      - -1.0
+      - 1.0
+      higher_is_more_severe: false
+  - id: aggregation_wrong_weights
+    stage: aggregation
+    type: wrong_sample_weights
+    active_rounds:
+    - 2
+    - 9
+    parameters:
+      mode: corrupted
+    severity:
+      parameter: intensity
+      bounds:
+      - 0.25
+      - 4.0
+      higher_is_more_severe: true
+  terminal_training_failures:
+  - stage: selection
+    type: minority_exclusion
+    active_rounds:
+    - 2
+    - 9
+    severity: 1
+    parameters:
+      target_class: 1
+      exclusion_probability: 0.75
+  - stage: local
+    type: lr_misconfig
+    active_rounds:
+    - 2
+    - 9
+    severity: 1
+    parameters:
+      fraction: 0.5
+      lr_multiplier: -1.0
+  - stage: compression
+    type: aggressive_topk
+    active_rounds:
+    - 2
+    - 9
+    severity: 1
+    parameters:
+      k_ratio: 0.05
+  - stage: aggregation
+    type: wrong_sample_weights
+    active_rounds:
+    - 2
+    - 9
+    severity: 1
+    parameters:
+      mode: corrupted

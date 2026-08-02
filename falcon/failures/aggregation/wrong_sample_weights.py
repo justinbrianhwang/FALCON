@@ -1,6 +1,8 @@
 """A1 — aggregation-stage failure: the server uses wrong sample-count weights."""
 from __future__ import annotations
 
+import math
+
 from ..base import FailureInjector
 
 _MODES = ("uniform", "swapped", "corrupted")
@@ -15,9 +17,13 @@ class WrongSampleWeightsInjector(FailureInjector):
           - ``"swapped"``: the weight values are reversed across sorted
             client ids (smallest id gets the largest id's weight, ...);
           - ``"corrupted"``: each weight is multiplied by a factor drawn from
-            stream ``failure.aggregation``, log-uniform in [0.1, 10)
-            (``10 ** uniform(-1, 1)``), one draw per client per active round
-            in sorted-id order.
+            stream ``failure.aggregation``, log-uniform in
+            ``[10**-intensity, 10**intensity)`` (``10 ** uniform(-i, i)``),
+            one draw per client per active round in sorted-id order.
+      - ``intensity`` (``"corrupted"`` only, Task T15): spread of the
+        log-uniform factors, in (0, 4]; default 1.0 reproduces the original
+        fixed [0.1, 10) range bit-for-bit (same stream, same draws).
+        ``"uniform"``/``"swapped"`` reject an ``intensity`` parameter.
 
     ``aggregate`` re-normalizes the weights as usual, so only their relative
     values matter.
@@ -32,6 +38,17 @@ class WrongSampleWeightsInjector(FailureInjector):
             raise ValueError(
                 f"wrong_sample_weights mode must be one of {_MODES}, "
                 f"got {self._mode!r}"
+            )
+        if self._mode == "corrupted":
+            self._intensity = float(spec.parameters.get("intensity", 1.0))
+            if not math.isfinite(self._intensity) or not 0.0 < self._intensity <= 4.0:
+                raise ValueError(
+                    f"intensity must be in (0, 4], got {self._intensity}"
+                )
+        elif "intensity" in spec.parameters:
+            raise ValueError(
+                f"intensity is only valid for mode 'corrupted', "
+                f"got mode {self._mode!r}"
             )
 
     @property
@@ -49,6 +66,8 @@ class WrongSampleWeightsInjector(FailureInjector):
             values.reverse()
             return dict(zip(ids, values))
         gen = self._gen()
+        intensity = self._intensity
         return {
-            cid: weights[cid] * float(10.0 ** gen.uniform(-1.0, 1.0)) for cid in ids
+            cid: weights[cid] * float(10.0 ** gen.uniform(-intensity, intensity))
+            for cid in ids
         }

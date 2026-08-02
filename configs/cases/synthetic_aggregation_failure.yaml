@@ -2,13 +2,15 @@
 # synthetic_reference.yaml (class_separation 0.4, label_noise 0.1), with
 # heterogeneity 2.0: all clients hold 100 samples, so "uniform"/"swapped"
 # weight modes are no-ops here; the "corrupted" mode (per-client log-uniform
-# factors in [0.1, 10]) only bites when client updates genuinely differ,
-# hence the non-IID partition. T11 calibration: clients_per_round dropped
-# 5 -> 2 — with 5 clients the corrupted weights mostly re-normalize away and
-# the accuracy gap was not measurable (+0.002); with 2 clients one corrupted
-# weight dominates the mean, so the failure steers the aggregate.
-# Measured on this config: reference final accuracy 0.824 vs failure 0.754
-# (accuracy gap +0.070, loss gap +0.041).
+# factors in [10**-intensity, 10**intensity]; T15 added the intensity knob,
+# and 1.0 reproduces the original fixed [0.1, 10] range bit-for-bit) only
+# bites when client updates genuinely differ, hence the non-IID partition.
+# T11 calibration: clients_per_round dropped 5 -> 2 — with 5 clients the
+# corrupted weights mostly re-normalize away and the accuracy gap was not
+# measurable (+0.002); with 2 clients one corrupted weight dominates the
+# mean, so the failure steers the aggregate.
+# Measured on this config (intensity 1.0): reference final accuracy 0.824
+# vs failure 0.754 (accuracy gap +0.070, loss gap +0.041).
 run_id: synthetic_aggregation_failure
 seed: 42
 rounds: 10
@@ -44,3 +46,4 @@ failure:
   severity: 1
   parameters:
     mode: corrupted
+    intensity: 1.0

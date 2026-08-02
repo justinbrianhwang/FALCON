@@ -521,6 +521,63 @@ def test_weights_rejects_unknown_mode(partition):
         _weights_injector(partition, "sideways")
 
 
+# --- A1/T15: corrupted-mode intensity knob -----------------------------------
+
+
+def _intensity_injector(partition, intensity, seed=13, active=(1, 2)):
+    return WrongSampleWeightsInjector(
+        _spec("aggregation", "wrong_sample_weights", active=active,
+              mode="corrupted", intensity=intensity),
+        partition,
+        Rng(seed),
+    )
+
+
+def test_weights_corrupted_intensity_1_bit_identical(partition):
+    """T15: explicit intensity=1.0 is the same stream, same draws as today."""
+    weights = {"client_0": 100.0, "client_1": 100.0, "client_2": 100.0}
+    explicit = _intensity_injector(partition, 1.0).weights(weights, 1)
+    default = _weights_injector(partition, "corrupted").weights(weights, 1)
+    assert explicit == default == _PINNED_CORRUPTED_WEIGHTS
+    # and across rounds, not just the first draw
+    for round_id in (1, 2):
+        assert (
+            _intensity_injector(partition, 1.0).weights(weights, round_id)
+            == _weights_injector(partition, "corrupted").weights(weights, round_id)
+        )
+
+
+def test_weights_corrupted_intensity_spread_monotone(partition):
+    """Higher intensity -> larger weight spread (same seed, same stream)."""
+    weights = {f"client_{i}": 100.0 for i in range(64)}
+    spreads = []
+    for intensity in (0.25, 1.0, 2.0, 4.0):
+        out = _intensity_injector(partition, intensity, active=(0, 0)).weights(weights, 0)
+        factors = [out[cid] / weights[cid] for cid in weights]
+        assert all(10.0 ** -intensity <= f <= 10.0 ** intensity for f in factors)
+        spreads.append(max(np.log10(factors)) - min(np.log10(factors)))
+    assert all(b > a for a, b in zip(spreads, spreads[1:])), spreads
+
+
+def test_weights_corrupted_rejects_bad_intensity(partition):
+    for bad in (0.0, -0.5, 4.5, float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="intensity"):
+            _intensity_injector(partition, bad)
+
+
+def test_weights_uniform_and_swapped_reject_intensity(partition):
+    """T15: the knob is corrupted-only; other modes fail loud, even at 1.0."""
+    for mode in ("uniform", "swapped"):
+        for intensity in (1.0, 2.0):
+            with pytest.raises(ValueError, match="intensity"):
+                WrongSampleWeightsInjector(
+                    _spec("aggregation", "wrong_sample_weights",
+                          mode=mode, intensity=intensity),
+                    partition,
+                    Rng(13),
+                )
+
+
 # --- cross-cutting determinism (same spec + seed -> identical transforms) ----
 
 

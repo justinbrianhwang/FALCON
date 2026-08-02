@@ -40,7 +40,9 @@ SEVERITY_GRID = [
     # severity axis runs through too-SMALL lr toward the sign flip.
     ("synthetic_local_failure.yaml", "lr_multiplier", [0.1, 0.01, -1.0]),
     ("synthetic_compression_failure.yaml", "k_ratio", [0.5, 0.2, 0.05]),
-    ("synthetic_aggregation_failure.yaml", "mode", ["uniform", "swapped", "corrupted"]),
+    # mode stays "corrupted"; intensity (T15) is the severity axis. uniform/swapped are
+    # provable no-ops under equal sample counts (measured 2026-08-02) and reject intensity.
+    ("synthetic_aggregation_failure.yaml", "intensity", [0.5, 1.0, 2.0]),
 ]
 SCALE_CLIENTS = [10, 25, 50]
 
