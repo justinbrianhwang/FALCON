@@ -1,8 +1,14 @@
-# A1 aggregation failure (Task T4) — mirrors synthetic_reference.yaml, with a
-# slower local config (lr 0.05, 3 steps) and heterogeneity 2.0: all clients
-# hold 100 samples, so "uniform"/"swapped" weight modes are no-ops here; the
-# "corrupted" mode (per-client log-uniform factors in [0.1, 10]) only bites
-# when client updates genuinely differ, hence the non-IID partition.
+# A1 aggregation failure (Task T4) — same T11-hardened task family as
+# synthetic_reference.yaml (class_separation 0.4, label_noise 0.1), with
+# heterogeneity 2.0: all clients hold 100 samples, so "uniform"/"swapped"
+# weight modes are no-ops here; the "corrupted" mode (per-client log-uniform
+# factors in [0.1, 10]) only bites when client updates genuinely differ,
+# hence the non-IID partition. T11 calibration: clients_per_round dropped
+# 5 -> 2 — with 5 clients the corrupted weights mostly re-normalize away and
+# the accuracy gap was not measurable (+0.002); with 2 clients one corrupted
+# weight dominates the mean, so the failure steers the aggregate.
+# Measured on this config: reference final accuracy 0.824 vs failure 0.754
+# (accuracy gap +0.070, loss gap +0.041).
 run_id: synthetic_aggregation_failure
 seed: 42
 rounds: 10
@@ -13,11 +19,13 @@ dataset:
   num_classes: 2
   samples_per_client: 100
   heterogeneity: 2.0
+  class_separation: 0.4
+  label_noise: 0.1
   minority_class: 1
   minority_client_fraction: 0.2
   seed: 1001
 selection:
-  clients_per_round: 5
+  clients_per_round: 2
   policy: uniform
 local:
   lr: 0.05

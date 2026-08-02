@@ -1,3 +1,5 @@
+# T11: same hardened task family as configs/cases (class_separation 0.4,
+# label_noise 0.1); E0 asserts bitwise replay only, never accuracy levels.
 - run_id: e0_clean
   seed: 42
   rounds: 3
@@ -8,6 +10,8 @@
     num_classes: 2
     samples_per_client: 16
     heterogeneity: 0.1
+    class_separation: 0.4
+    label_noise: 0.1
     seed: 1001
   selection:
     clients_per_round: 2
@@ -31,6 +35,8 @@
     num_classes: 2
     samples_per_client: 16
     heterogeneity: 0.1
+    class_separation: 0.4
+    label_noise: 0.1
     seed: 1002
   selection:
     clients_per_round: 2

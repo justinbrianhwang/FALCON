@@ -1,4 +1,12 @@
 # Reference synthetic case — maps 1:1 onto falcon.schema.RunConfig (CONTRACTS §6).
+#
+# T11 difficulty calibration: class_separation 0.4 shrinks the cluster-mean
+# distance to 0.4x the within-cluster noise (eval Bayes accuracy ~0.90) and
+# label_noise 0.1 flips 10% of TRAIN labels (eval labels stay clean). Local
+# lr 0.01 / 3 steps keeps per-round progress small so the clean run climbs
+# visibly instead of saturating at round 0 (the pre-T11 failure mode).
+# Measured clean trajectory (accuracy): 0.744 0.850 0.866 0.882 0.892 0.892
+# 0.896 0.896 0.904 0.906 — final 0.906, inside the 0.85-0.92 target band.
 run_id: synthetic_reference
 seed: 42
 rounds: 10
@@ -9,6 +17,8 @@ dataset:
   num_classes: 2
   samples_per_client: 100
   heterogeneity: 0.0
+  class_separation: 0.4
+  label_noise: 0.1
   minority_class: null
   minority_client_fraction: 0.2
   seed: 1001
@@ -16,8 +26,8 @@ selection:
   clients_per_round: 5
   policy: uniform
 local:
-  lr: 0.1
-  local_steps: 5
+  lr: 0.01
+  local_steps: 3
   batch_size: 32
 compression:
   kind: identity

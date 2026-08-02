@@ -1,8 +1,12 @@
-# S1 selection failure (Task T4) — mirrors synthetic_reference.yaml, with
+# S1 selection failure (Task T4) — same T11-hardened task family as
+# synthetic_reference.yaml (class_separation 0.4, label_noise 0.1), with
 # minority_class set so the injector has minority-heavy clients to exclude,
-# and a slower local config (lr 0.05, 3 steps) so the exclusion window bites
-# before convergence. Clients client_7/client_9 carry ~45% of class 1 each
-# (global share 0.1) and are dropped from the candidate pool on rounds 2-9.
+# and a moderate local config (lr 0.05, 3 steps) so the stripped reference
+# converges quickly and the exclusion gap is measured against a stable
+# reference. Clients client_7/client_9 carry ~45% of class 1 each (global
+# share 0.1) and are dropped from the candidate pool on rounds 2-9.
+# Measured on this config: reference final accuracy 0.820 vs failure 0.742
+# (accuracy gap +0.078); minority-class accuracy gap +0.165 (primary, S1).
 run_id: synthetic_selection_failure
 seed: 42
 rounds: 10
@@ -13,6 +17,8 @@ dataset:
   num_classes: 2
   samples_per_client: 100
   heterogeneity: 0.0
+  class_separation: 0.4
+  label_noise: 0.1
   minority_class: 1
   minority_client_fraction: 0.2
   seed: 1001

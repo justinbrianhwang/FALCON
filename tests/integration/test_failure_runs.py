@@ -4,20 +4,30 @@ Each case file in ``configs/cases/`` is paired with its own reference: the
 same YAML with ``failure`` stripped. With the same seed, runs must agree on
 every stage hash before the failure window, and the first divergent stage
 must be exactly the injected stage. The failure run's primary metric must be
-measurably worse — chosen severities (documented per case below):
+measurably worse — and since T11 hardened the task (class_separation 0.4,
+label_noise 0.1, no more saturated accuracy) EVERY case must show a
+measurable ACCURACY gap, not just a loss gap (Plan §17.3 forbids
+"no measurable failure" severities). Chosen severities and the exact
+deterministic gaps measured on the committed configs:
 
 - selection / minority_exclusion: p=1.0 on rounds 2-9 drops the two
   minority-heavy clients (each holds ~45% of class 1 vs 10% global share).
   Primary metric: minority-class eval accuracy (Plan §10.2 S1).
+  Measured: minority-class accuracy gap +0.165, overall accuracy gap +0.078.
 - local / lr_misconfig: four clients get a sign-flipped lr (multiplier -1.0,
-  Plan §10.2 L1 "sign error" sanity case — on this separable task merely
-  larger/smaller rates do not measurably degrade). Primary: accuracy/loss.
+  Plan §10.2 L1 "sign error" sanity case — a merely larger/smaller rate does
+  not measurably degrade even on the hardened task). Primary: accuracy/loss.
+  Measured: accuracy gap +0.142, loss gap +0.115.
 - compression / aggressive_topk: k_ratio 0.05 keeps ceil(0.05*42) = 3 of 42
   update coordinates on rounds 2-9. Primary: accuracy/loss.
+  Measured: accuracy gap +0.126, loss gap +0.096.
 - aggregation / wrong_sample_weights: "corrupted" mode (log-uniform factors
   in [0.1, 10]) on rounds 2-9, under heterogeneity 2.0 so reweighting bites
-  (uniform weights are a no-op here: all clients hold 100 samples).
-  Primary: loss (accuracy gap is small by design of this failure mode).
+  (uniform weights are a no-op here: all clients hold 100 samples). T11
+  calibration: clients_per_round 5 -> 2, because with 5 clients the
+  corrupted weights re-normalize away (accuracy gap was +0.002, not
+  measurable). Primary: accuracy/loss.
+  Measured: accuracy gap +0.070, loss gap +0.041.
 """
 import copy
 from pathlib import Path
@@ -111,22 +121,28 @@ def test_failure_run_metric_measurably_worse(tmp_path, filename, injected_stage)
     ref_final, fail_final = reference[-1], failure[-1]
 
     if injected_stage == "selection":
-        # minority recall is the primary metric for S1 (Plan §10.2)
+        # minority recall is the primary metric for S1 (Plan §10.2);
+        # measured on the committed config: +0.165 minority, +0.078 overall
         gap = ref_final.per_class["1"]["accuracy"] - fail_final.per_class["1"]["accuracy"]
-        assert gap >= 0.02, f"minority-class accuracy gap too small: {gap}"
-        assert fail_final.metrics["accuracy"] < ref_final.metrics["accuracy"]
+        assert gap >= 0.10, f"minority-class accuracy gap too small: {gap}"
+        acc_gap = ref_final.metrics["accuracy"] - fail_final.metrics["accuracy"]
+        assert acc_gap >= 0.05, f"accuracy gap too small: {acc_gap}"
     elif injected_stage == "local":
+        # measured on the committed config: +0.142 accuracy, +0.115 loss
         gap = ref_final.metrics["accuracy"] - fail_final.metrics["accuracy"]
-        assert gap >= 0.02, f"accuracy gap too small: {gap}"
+        assert gap >= 0.10, f"accuracy gap too small: {gap}"
         assert fail_final.metrics["loss"] > ref_final.metrics["loss"] + 0.05
     elif injected_stage == "compression":
+        # measured on the committed config: +0.126 accuracy, +0.096 loss
         gap = ref_final.metrics["accuracy"] - fail_final.metrics["accuracy"]
-        assert gap >= 0.005, f"accuracy gap too small: {gap}"
+        assert gap >= 0.10, f"accuracy gap too small: {gap}"
         assert fail_final.metrics["loss"] > ref_final.metrics["loss"] + 0.05
     else:  # aggregation
+        # measured on the committed config: +0.070 accuracy, +0.041 loss
+        acc_gap = ref_final.metrics["accuracy"] - fail_final.metrics["accuracy"]
+        assert acc_gap >= 0.03, f"accuracy gap too small: {acc_gap}"
         gap = fail_final.metrics["loss"] - ref_final.metrics["loss"]
-        assert gap >= 0.005, f"loss gap too small: {gap}"
-        assert fail_final.metrics["accuracy"] < ref_final.metrics["accuracy"]
+        assert gap >= 0.02, f"loss gap too small: {gap}"
 
 
 def test_reference_run_of_each_case_is_deterministic(tmp_path):

@@ -1,8 +1,12 @@
-# L1 local-training failure (Task T4) — mirrors synthetic_reference.yaml,
-# with a slower local config (lr 0.05, 3 steps) so the misconfiguration bites
-# before convergence. Four clients train with a sign-flipped learning rate
-# (lr_multiplier -1.0, the Plan §10.2 L1 "sign error" sanity case: on this
-# separable task a merely larger/smaller lr does not measurably degrade).
+# L1 local-training failure (Task T4) — same T11-hardened task family as
+# synthetic_reference.yaml (class_separation 0.4, label_noise 0.1), with a
+# moderate local config (lr 0.05, 3 steps) so the stripped reference
+# converges quickly and the misconfiguration gap is measured against a
+# stable reference. Four clients train with a sign-flipped learning rate
+# (lr_multiplier -1.0, the Plan §10.2 L1 "sign error" sanity case: a merely
+# larger/smaller lr does not measurably degrade even on the hardened task).
+# Measured on this config: reference final accuracy 0.820 vs failure 0.678
+# (accuracy gap +0.142, loss gap +0.115).
 run_id: synthetic_local_failure
 seed: 42
 rounds: 10
@@ -13,6 +17,8 @@ dataset:
   num_classes: 2
   samples_per_client: 100
   heterogeneity: 0.0
+  class_separation: 0.4
+  label_noise: 0.1
   minority_class: 1
   minority_client_fraction: 0.2
   seed: 1001

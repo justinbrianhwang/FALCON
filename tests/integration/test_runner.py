@@ -28,8 +28,15 @@ def cfg() -> RunConfig:
         run_id="test_synthetic",
         seed=42,
         rounds=3,
+        # T11-hardened task (class_separation 0.4, label_noise 0.1): accuracy
+        # must not saturate at ~1.0 the way the separable task did.
         dataset=DatasetConfig(
-            num_clients=5, num_features=10, num_classes=2, samples_per_client=80
+            num_clients=5,
+            num_features=10,
+            num_classes=2,
+            samples_per_client=80,
+            class_separation=0.4,
+            label_noise=0.1,
         ),
         selection=SelectionConfig(clients_per_round=3),
         local=LocalConfig(lr=0.5, local_steps=8, batch_size=16),
@@ -45,7 +52,10 @@ def test_loss_decreases_over_rounds(cfg):
     losses = [o.metrics["loss"] for o in outcomes]
     assert all(np.isfinite(losses))
     assert losses[-1] < losses[0]
-    assert outcomes[-1].metrics["accuracy"] > 0.9  # learning happened
+    # learning happened but the hardened task is not saturated (T11):
+    # measured accuracy on this fixture is ~0.80
+    accuracy = outcomes[-1].metrics["accuracy"]
+    assert 0.6 < accuracy < 0.95
 
 
 def test_two_runs_identical(cfg):

@@ -4,6 +4,10 @@ Documented minority semantics: a designated subset of
 ``max(1, round(num_clients * minority_client_fraction))`` clients holds
 ~``_MINORITY_CONCENTRATION`` of ALL minority-class samples; the class stays
 globally rare (~``_MINORITY_PREVALENCE``) and is suppressed elsewhere.
+
+T11 adds the difficulty knobs: ``class_separation`` scales the cluster means
+relative to the noise, and ``label_noise`` flips that fraction of TRAIN
+labels (drawn from the partition generator; eval labels are never flipped).
 """
 import numpy as np
 import pytest
@@ -141,3 +145,105 @@ def test_eval_data_deterministic_and_float64():
     assert a.x.dtype == np.float64
     assert a.y.dtype == np.int64
     assert a.x.shape[1] == cfg.num_features
+
+
+# --- T11: class_separation and label_noise -------------------------------
+
+
+def _plain_cfg(**overrides) -> DatasetConfig:
+    base = dict(
+        num_clients=4,
+        num_features=5,
+        num_classes=2,
+        samples_per_client=200,
+        seed=123,
+    )
+    return DatasetConfig(**(base | overrides))
+
+
+def test_class_separation_scales_cluster_means_only():
+    """Same draws, smaller means: x shrinks toward the noise, y is untouched."""
+    easy = make_partition(_plain_cfg(class_separation=1.0))
+    hard = make_partition(_plain_cfg(class_separation=0.3))
+    for cid in easy:
+        np.testing.assert_array_equal(easy[cid].y, hard[cid].y)
+        # centers differ -> features differ
+        assert not np.array_equal(easy[cid].x, hard[cid].x)
+    # the mean distance between class-conditional feature means shrinks
+    def gap(partition):
+        x = np.concatenate([d.x for d in partition.values()])
+        y = np.concatenate([d.y for d in partition.values()])
+        return np.linalg.norm(x[y == 0].mean(axis=0) - x[y == 1].mean(axis=0))
+
+    assert gap(hard) < gap(easy)
+
+
+def test_default_class_separation_is_exact_identity():
+    """The documented default must reproduce the pre-T11 easy task exactly."""
+    explicit = make_partition(_plain_cfg(class_separation=1.0))
+    defaulted = make_partition(_plain_cfg())
+    for cid in explicit:
+        np.testing.assert_array_equal(explicit[cid].x, defaulted[cid].x)
+        np.testing.assert_array_equal(explicit[cid].y, defaulted[cid].y)
+
+
+def test_label_noise_flips_requested_fraction_of_train_labels():
+    clean = make_partition(_plain_cfg(label_noise=0.0))
+    noisy = make_partition(_plain_cfg(label_noise=0.25))
+    for cid in clean:
+        # features are sampled before flipping: identical draws, only y moves
+        np.testing.assert_array_equal(clean[cid].x, noisy[cid].x)
+        differing = clean[cid].y != noisy[cid].y
+        assert differing.sum() == round(clean[cid].y.shape[0] * 0.25)
+        # binary task: a flip is always to the other class
+        assert (noisy[cid].y[differing] == 1 - clean[cid].y[differing]).all()
+
+
+def test_label_noise_deterministic_from_dataset_seed():
+    a = make_partition(_plain_cfg(label_noise=0.3))
+    b = make_partition(_plain_cfg(label_noise=0.3))
+    other = make_partition(_plain_cfg(label_noise=0.3, seed=124))
+    for cid in a:
+        np.testing.assert_array_equal(a[cid].y, b[cid].y)
+    assert any(not np.array_equal(a[cid].y, other[cid].y) for cid in a)
+
+
+def test_label_noise_flips_only_to_other_classes_multiclass():
+    cfg = _plain_cfg(num_classes=4, label_noise=0.5)
+    clean = make_partition(_plain_cfg(num_classes=4, label_noise=0.0))
+    noisy = make_partition(cfg)
+    for cid in clean:
+        np.testing.assert_array_equal(clean[cid].x, noisy[cid].x)
+        changed = clean[cid].y != noisy[cid].y
+        assert changed.sum() == round(clean[cid].y.shape[0] * 0.5)
+        # every changed label is a genuine flip to a different class
+        assert (noisy[cid].y[changed] != clean[cid].y[changed]).all()
+        assert set(np.unique(noisy[cid].y)) <= set(range(4))
+
+
+def test_label_noise_never_touches_eval_data():
+    cfg_clean = _plain_cfg(label_noise=0.0)
+    cfg_noisy = _plain_cfg(label_noise=0.9)
+    a = make_eval_data(cfg_clean)
+    b = make_eval_data(cfg_noisy)
+    np.testing.assert_array_equal(a.x, b.x)
+    np.testing.assert_array_equal(a.y, b.y)
+
+
+def test_class_separation_applies_to_eval_data():
+    easy = make_eval_data(_plain_cfg(class_separation=1.0))
+    hard = make_eval_data(_plain_cfg(class_separation=0.3))
+    np.testing.assert_array_equal(easy.y, hard.y)
+    assert not np.array_equal(easy.x, hard.x)
+
+
+def test_label_noise_out_of_range_rejected():
+    with pytest.raises(ValueError, match="label_noise"):
+        make_partition(_plain_cfg(label_noise=-0.1))
+    with pytest.raises(ValueError, match="label_noise"):
+        make_partition(_plain_cfg(label_noise=1.1))
+
+
+def test_class_separation_nonpositive_rejected():
+    with pytest.raises(ValueError, match="class_separation"):
+        make_partition(_plain_cfg(class_separation=0.0))

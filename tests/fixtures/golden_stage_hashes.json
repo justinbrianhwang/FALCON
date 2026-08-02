@@ -7,6 +7,8 @@
       "kind": "identity"
     },
     "dataset": {
+      "class_separation": 0.4,
+      "label_noise": 0.1,
       "num_classes": 2,
       "num_clients": 5,
       "num_features": 10,
@@ -24,20 +26,20 @@
     }
   },
   "stage_hashes": {
-    "0/aggregation": "40b7a11a5237ac71fad0046f8dc3b8b1e2937a5ad6749968137562506eb5ab4c",
-    "0/compression": "31ad825c30e7aed2f00053ca545f275a04c4766d14748328896e1ca5c5a0735d",
-    "0/evaluation": "c9946510ee5d05ccc17f2d160a2e506c550407943716de0492942254ce91527f",
-    "0/local": "1b22f82439e932045a4d2b9923a60b8573db4755dca5dcf3f60103f1168e6c96",
+    "0/aggregation": "4997b620d9e5307cd5ee294cc986d2a25a32b94e2d4c603490166054984afe11",
+    "0/compression": "451708cf69ca30b714ba03995419dc37a718f527c8c920af2ffe3ab2882344c5",
+    "0/evaluation": "ad48ca9a74b83143b062176ac94e78f049e629af8eea3c6b83e1fda5e157e5c9",
+    "0/local": "0101089c5dde416634f990274c59eacd2649f05a017efea55669e0917052b357",
     "0/selection": "8e4f789d089a1c005b4610e2bc6df1cbe59f21ddd6b835e71336918efae9577e",
-    "1/aggregation": "28e26ee8e01aaf6dc99acd8da67af335ae65f83249a1bbe67d85793c6b11b27c",
-    "1/compression": "1bc03b01a22b23b196aba93f9c610256a93010687d7ec4b077f4f50f2cbdce0d",
-    "1/evaluation": "1c9fe02d5e863d2d84917e599176d64f93cd5b16d33620e17111f6bb8a9cc7bd",
-    "1/local": "66359505cfc8173c34a0b229e0cf2f5475baa3bc4c1269fe79ba9d23ea456a70",
+    "1/aggregation": "912dc472769acc9437ef46f17f40dbfe03b372bc4bad27989714507bfbd7393b",
+    "1/compression": "a7ba0b9427fbad633d2d9d8b86ab71be335fdce6b7bbf3954b9bed24685ce4c1",
+    "1/evaluation": "b19e17e7c60cfdcaadb1d3e0c274a32bb9688ead2dca7be6a5bef88c42f48f9d",
+    "1/local": "61648595876b64bd9732f4479d34be0f6c5d526e99e3f67ed0fbc5cfa6c6bfaa",
     "1/selection": "9b1baef979ab834562e0f30163cb1c55f54e64a370852073bb934c70f40ddc93",
-    "2/aggregation": "78b0344b0806aac0d8357efba6e2aa648bc686bd2f40a09dbef695e849695f58",
-    "2/compression": "3fc907a785d7b37cd1ecc3cc29a970f37bec007f389819755d44b9fee3c63a7a",
-    "2/evaluation": "336662d6bdc42f9772df2bf551251bff01e4b68b1a3aa2b4c1c17c9b62e4b512",
-    "2/local": "e5006f564fe950a96c54e3a67bbba14218a0d83e5428f2722f3e7bf6ed28c74c",
+    "2/aggregation": "501e4e0aa544bb244ea5880bcb2f3378ebc04d99b7625f6bde795a26d23e4fa1",
+    "2/compression": "05aaa8f7928fd837e0167b96c5b9d2de117770480e557036f00ebbfb8fbaa093",
+    "2/evaluation": "00cd26a40309e4e0aae48c91d65ebd481b47f47985f4c1abd5a82ee29a171c90",
+    "2/local": "4fbee7d172d796952d58b63017ead13cf7efd7d1ecd3ee26828076ac495fe6a9",
     "2/selection": "e647ad17b2a70f11ed7e85597edf20ac2b13f1177109eb9ba6055e077e7b5e52"
   }
 }

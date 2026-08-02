@@ -25,8 +25,10 @@ from falcon.schema import (
 
 STAGE_ORDER = ("selection", "local", "compression", "aggregation", "evaluation")
 
-#: committed golden boundary hashes for the ``cfg`` fixture below, generated
-#: once at the T4/T5/T8-F fix HEAD (CONTRACTS v0.2 round-keyed streams)
+#: committed golden boundary hashes for the ``cfg`` fixture below; first
+#: generated at the T4/T5/T8-F fix HEAD (CONTRACTS v0.2 round-keyed streams),
+#: regenerated at T11 for the hardened task (class_separation 0.4,
+#: label_noise 0.1 in the fixture dataset)
 GOLDEN_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "golden_stage_hashes.json"
 
 
@@ -36,8 +38,15 @@ def cfg() -> RunConfig:
         run_id="test_overlay",
         seed=42,
         rounds=3,
+        # T11-hardened task (class_separation 0.4, label_noise 0.1) so the
+        # golden fixture pins the hardened data path, not the separable one.
         dataset=DatasetConfig(
-            num_clients=5, num_features=10, num_classes=2, samples_per_client=80
+            num_clients=5,
+            num_features=10,
+            num_classes=2,
+            samples_per_client=80,
+            class_separation=0.4,
+            label_noise=0.1,
         ),
         selection=SelectionConfig(clients_per_round=3),
         local=LocalConfig(lr=0.5, local_steps=8, batch_size=16),

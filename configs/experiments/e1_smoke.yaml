@@ -2,8 +2,16 @@ case_id: e1_smoke
 seed: 42
 metric: loss
 higher_is_better: false
-target_gap: 0.03
-gap_tolerance: 0.005
+# T11: the reference dataset is mildly hardened (class_separation 0.8,
+# label_noise 0.05 below). On the harder task the attainable terminal loss
+# gaps shrink (the loss floor is dominated by task difficulty, not learning
+# progress) and turn discrete: probed values are selection +0.0208 (a wide
+# plateau over exclusion_probability 0.2-0.5) and compression +0.0242 (the
+# 3-of-18-coordinates top-k step; neighboring steps are +0.0337 and
+# +0.0117). Target 0.022 +/- 0.003 is the band containing both steps (the
+# pre-T11 0.03 target is no longer attainable by both failures).
+target_gap: 0.022
+gap_tolerance: 0.003
 max_iterations: 8
 min_gap: 0.005
 sham_tolerance: 1.0e-9
@@ -17,6 +25,8 @@ reference:
     num_classes: 2
     samples_per_client: 32
     heterogeneity: 0.0
+    class_separation: 0.8
+    label_noise: 0.05
     minority_class: 1
     minority_client_fraction: 0.33
     seed: 1001
