@@ -27,17 +27,21 @@ from falcon.reporting.report import render_markdown  # noqa: E402
 from falcon.schema import FailureSpecification, RunConfig, RunMetadata  # noqa: E402
 
 FAILURES = [
+    # CIFAR's weak-model regime (~0.16 acc) hides selection damage in GLOBAL accuracy —
+    # first co-author run measured gap 0.0016 at p=0.9/rounds(10,39). Max severity + longer
+    # window; if the gap is still insufficient that is itself a finding (Plan §14.10: selection
+    # failures need minority-recall outcomes, not global accuracy).
     ("selection", FailureSpecification(
-        stage="selection", type="minority_exclusion", active_rounds=(10, 39), severity=2,
-        parameters={"target_class": 1, "exclusion_probability": 0.9})),
+        stage="selection", type="minority_exclusion", active_rounds=(10, 49), severity=3,
+        parameters={"target_class": 1, "exclusion_probability": 1.0})),
     ("local", FailureSpecification(
-        stage="local", type="lr_misconfig", active_rounds=(10, 39), severity=2,
+        stage="local", type="lr_misconfig", active_rounds=(10, 49), severity=2,
         parameters={"fraction": 0.5, "lr_multiplier": -1.0})),
     ("compression", FailureSpecification(
-        stage="compression", type="aggressive_topk", active_rounds=(10, 39), severity=2,
+        stage="compression", type="aggressive_topk", active_rounds=(10, 49), severity=2,
         parameters={"k_ratio": 0.05})),
     ("aggregation", FailureSpecification(
-        stage="aggregation", type="wrong_sample_weights", active_rounds=(10, 39), severity=2,
+        stage="aggregation", type="wrong_sample_weights", active_rounds=(10, 49), severity=2,
         parameters={"mode": "biased", "target_class": 1, "weight_multiplier": 0.1})),
 ]
 
@@ -62,7 +66,7 @@ def main() -> None:
         base["rounds"] = 4
         active = (1, 3)
     else:
-        active = (10, 39)
+        active = (10, 49)
     out.mkdir(parents=True, exist_ok=True)
 
     ref_cfg = RunConfig(**{**base, "run_id": "ref", "failure": None})
