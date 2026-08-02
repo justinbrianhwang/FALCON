@@ -1,5 +1,6 @@
-# E2 pair B: local vs aggregation, gap-matched. Own reference (2 clients/round —
-# aggregation weight corruption renormalizes away at 5/round). Pair A = e1_seeds.yaml.
+# E2 pair B: local vs aggregation, ACCURACY-gap-matched at 0.06±0.012.
+# Own reference (2 clients/round). local fraction=1.0 widens the attainable range so
+# it overlaps aggregation's (intensity axis 0.038-0.118 measured at seed 42).
 seeds:
 - 1
 - 2
@@ -8,12 +9,12 @@ seeds:
 - 5
 experiment:
   case_id: main_e2b
-  metric: loss
-  higher_is_better: false
-  target_gap: 0.02
-  gap_tolerance: 0.006
+  metric: accuracy
+  higher_is_better: true
+  target_gap: 0.06
+  gap_tolerance: 0.012
   max_iterations: 8
-  min_gap: 0.005
+  min_gap: 0.01
   sham_tolerance: 1.0e-09
   reference:
     rounds: 10
@@ -47,7 +48,7 @@ experiment:
     - 2
     - 9
     parameters:
-      fraction: 0.5
+      fraction: 1.0
     severity:
       parameter: lr_multiplier
       bounds:

@@ -37,7 +37,7 @@ from falcon.baselines import (  # noqa: E402
     terminal_features,
 )
 from falcon.matcher.matcher import validate_pair  # noqa: E402
-from falcon.pipeline import run  # noqa: E402
+from falcon.pipeline import make_eval_data, run  # noqa: E402
 from falcon.recorder import Recorder  # noqa: E402
 from falcon.replay import Rng  # noqa: E402
 from falcon.reporting import analyze_pair  # noqa: E402
@@ -116,6 +116,15 @@ def _gap(reference_value: float, failure_value: float, higher_is_better: bool) -
         if higher_is_better
         else failure_value - reference_value
     )
+
+
+def _match_tolerance(
+    reference: RunConfig, metric: str, gap_tolerance: float
+) -> float:
+    if metric != "accuracy":
+        return gap_tolerance
+    eval_n = len(make_eval_data(reference.dataset).y)
+    return max(gap_tolerance, 0.5 / eval_n)
 
 
 def _default_pair_failures(reference: RunConfig) -> list[dict[str, Any]]:
@@ -197,6 +206,14 @@ def _bisect_match(
     if not isinstance(parameters, dict):
         raise ValueError(f"failure {case_id!r} parameters must be a mapping")
 
+    match_tolerance = _match_tolerance(reference, metric, gap_tolerance)
+
+    def is_match(gap: float) -> bool:
+        error = abs(gap - target_gap)
+        return error <= match_tolerance or math.isclose(
+            error, match_tolerance, rel_tol=0.0, abs_tol=1e-12
+        )
+
     trace: list[dict[str, Any]] = []
     def evaluate(value: float, phase: str, iteration: int) -> tuple[RunConfig, float]:
         failure = copy.deepcopy(base_failure)
@@ -219,7 +236,8 @@ def _bisect_match(
                 "gap": gap,
                 "target_gap": target_gap,
                 "absolute_error": abs(gap - target_gap),
-                "matched": abs(gap - target_gap) <= gap_tolerance,
+                "match_tolerance": match_tolerance,
+                "matched": is_match(gap),
             }
         )
         return cfg, gap
@@ -229,7 +247,7 @@ def _bisect_match(
     endpoint_matches = [
         (cfg, gap)
         for cfg, gap in ((low_cfg, low_gap), (high_cfg, high_gap))
-        if abs(gap - target_gap) <= gap_tolerance
+        if is_match(gap)
     ]
     if endpoint_matches:
         chosen, _ = min(endpoint_matches, key=lambda item: abs(item[1] - target_gap))
@@ -258,7 +276,7 @@ def _bisect_match(
     for iteration in range(1, max_iterations + 1):
         midpoint = (mild_value + severe_value) / 2.0
         cfg, gap = evaluate(midpoint, "bisection", iteration)
-        if abs(gap - target_gap) <= gap_tolerance:
+        if is_match(gap):
             return cfg.model_copy(update={"run_id": f"e1_{case_id}"}), trace
         if gap < target_gap:
             mild_value, mild_gap = midpoint, gap
