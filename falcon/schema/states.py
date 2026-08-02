@@ -72,7 +72,8 @@ class FailureSpecification(BaseModel):
 class InterventionSpecification(BaseModel):
     target_run_id: str
     source_run_id: str
-    round_id: int
+    round_id: int  # single-round intervention; ignored when round_window is set
+    round_window: Optional[tuple[int, int]] = None  # inclusive [t1, t2] — Plan §13.5
     stage: Stage
     mode: Literal["restore", "inject", "sham"]
     scope: dict[str, Any] = Field(default_factory=dict)  # e.g. {"client_ids": [...]}
