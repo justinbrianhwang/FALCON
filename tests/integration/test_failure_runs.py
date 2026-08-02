@@ -28,6 +28,10 @@ deterministic gaps measured on the committed configs:
   corrupted weights re-normalize away (accuracy gap was +0.002, not
   measurable). Primary: accuracy/loss.
   Measured: accuracy gap +0.070, loss gap +0.041.
+- aggregation / wrong_sample_weights, T17 "biased" mode: the two
+  minority-heavy clients' weights are multiplied by 0.1 on rounds 2-9,
+  deterministically (no RNG). Primary: accuracy/loss.
+  Measured: accuracy gap +0.128, loss gap +0.094.
 """
 import copy
 from pathlib import Path
@@ -57,6 +61,7 @@ CASES = [
     ("synthetic_local_failure.yaml", "local"),
     ("synthetic_compression_failure.yaml", "compression"),
     ("synthetic_aggregation_failure.yaml", "aggregation"),
+    ("synthetic_aggregation_biased.yaml", "aggregation"),
 ]
 
 

@@ -5,11 +5,19 @@ gap-matched failure pairs (target loss-gap 0.02 ± 0.006), two failure families
 (selection/minority_exclusion vs compression/aggressive_topk), window interventions (T13),
 carrier-chain resolution (T14). Two machines, disjoint seeds.
 
-| Method | Main (seeds 1–5) | Co-author (seeds 101–105) | Co-author (heterogeneity .5/1/2) | **Total Top-1** |
-|---|---:|---:|---:|---:|
-| **FALCON (restore+inject+sham, windowed)** | 10/10 | 10/10 | 6/6 | **26/26** |
-| Passive stage anomaly | 5/10 | 5/10 | 3/6 | 13/26 |
-| Terminal-only (nearest centroid) | 4/10 | 5/10 | 4/6 | 13/26 |
+Pair A = selection/minority_exclusion vs compression/aggressive_topk (loss-gap-matched).
+Pair B = local/lr_misconfig vs aggregation/biased_weights (accuracy-gap-matched 0.06±0.012,
+T17 deterministic A1 variant) — all four intervenable stages covered.
+
+| Method | Pair A main (s1–5) | Pair A co-author (s101–105) | Pair A co-author (het .5/1/2) | Pair B main (s1–5) | **Total Top-1** |
+|---|---:|---:|---:|---:|---:|
+| **FALCON (restore+inject+sham, windowed)** | 10/10 | 10/10 | 6/6 | 10/10 | **36/36** |
+| Passive stage anomaly | 5/10 | 5/10 | 3/6 | 6/10 | 19/36 |
+| Terminal-only (nearest centroid) | 4/10 | 5/10 | 4/6 | 3/10 | 16/36 |
+
+Pair B failure-mode detail: passive mislocalizes local failures as `aggregation` (4/5 seeds —
+downstream anomaly dominance again, H3); terminal-only calls every aggregation failure
+`selection`. FALCON resolved a carrier tie with aggregation in all five local cases.
 
 Observations:
 

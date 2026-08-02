@@ -1,6 +1,7 @@
-# E2 pair B: local vs aggregation, ACCURACY-gap-matched at 0.06±0.012.
-# Own reference (2 clients/round). local fraction=1.0 widens the attainable range so
-# it overlaps aggregation's (intensity axis 0.038-0.118 measured at seed 42).
+# E2 pair B: local (lr_misconfig fraction 1.0) vs aggregation (biased weights, T17).
+# ACCURACY-gap-matched 0.06±0.012. 5 clients/round: biased down-weighting is systematic
+# (does not renormalize away like corrupted) and minority clients participate often
+# enough that the effect is not gated by per-seed selection draws.
 seeds:
 - 1
 - 2
@@ -31,7 +32,7 @@ experiment:
       minority_client_fraction: 0.2
       seed: 1001
     selection:
-      clients_per_round: 2
+      clients_per_round: 5
     local:
       lr: 0.05
       local_steps: 3
@@ -55,20 +56,21 @@ experiment:
       - -1.0
       - 1.0
       higher_is_more_severe: false
-  - id: aggregation_wrong_weights
+  - id: aggregation_biased_weights
     stage: aggregation
     type: wrong_sample_weights
     active_rounds:
     - 2
     - 9
     parameters:
-      mode: corrupted
+      mode: biased
+      target_class: 1
     severity:
-      parameter: intensity
+      parameter: weight_multiplier
       bounds:
-      - 0.25
-      - 4.0
-      higher_is_more_severe: true
+      - 0.05
+      - 1.0
+      higher_is_more_severe: false
   terminal_training_failures:
   - stage: selection
     type: minority_exclusion

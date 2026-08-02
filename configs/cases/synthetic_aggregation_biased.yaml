@@ -1,0 +1,55 @@
+# A1 aggregation failure, DETERMINISTIC variant (Task T17) — same T11-hardened
+# task family as synthetic_aggregation_failure.yaml (heterogeneity 2.0,
+# clients_per_round 2, minority_class 1): wrong_sample_weights "biased" mode.
+# Whereas "corrupted" draws per-client log-uniform factors from the RNG
+# (per-seed gap endpoints span -0.03...+0.12, sign-unstable, not gap-matchable),
+# "biased" multiplies the aggregation weights of MINORITY-HEAVY clients (share
+# of target_class above the dataset-wide share — the same targeting rule as
+# selection's minority_exclusion) by weight_multiplier BEFORE normalization.
+# No RNG at all: weight_multiplier=1.0 is an exact no-op (bit-identical stage
+# hashes vs the reference), and lower multipliers are deterministically more
+# severe. This config commits multiplier 0.1 on target_class 1 (the two
+# minority-heavy clients, ~45% class-1 share vs 10% global).
+# Measured on this config (seed 42):
+#   multiplier 1.0: bit-identical to reference (accuracy gap +0.000)
+#   multiplier 0.5: accuracy gap +0.038, loss gap +0.033 (monotone)
+#   multiplier 0.1: reference final accuracy 0.824 vs failure 0.696
+#                   (accuracy gap +0.128, loss gap +0.094,
+#                    minority-class accuracy gap +0.229)
+run_id: synthetic_aggregation_biased
+seed: 42
+rounds: 10
+dataset:
+  name: synthetic
+  num_clients: 10
+  num_features: 20
+  num_classes: 2
+  samples_per_client: 100
+  heterogeneity: 2.0
+  class_separation: 0.4
+  label_noise: 0.1
+  minority_class: 1
+  minority_client_fraction: 0.2
+  seed: 1001
+selection:
+  clients_per_round: 2
+  policy: uniform
+local:
+  lr: 0.05
+  local_steps: 3
+  batch_size: 32
+compression:
+  kind: identity
+  parameters: {}
+aggregation:
+  rule: weighted_mean
+  parameters: {}
+failure:
+  stage: aggregation
+  type: wrong_sample_weights
+  active_rounds: [2, 9]
+  severity: 1
+  parameters:
+    mode: biased
+    weight_multiplier: 0.1
+    target_class: 1

@@ -1,9 +1,8 @@
 """S1 — selection-stage failure: minority-class clients are dropped from the pool."""
 from __future__ import annotations
 
-import numpy as np
-
 from ..base import FailureInjector
+from ..targeting import minority_heavy_clients
 
 
 class MinorityExclusionInjector(FailureInjector):
@@ -34,23 +33,7 @@ class MinorityExclusionInjector(FailureInjector):
                 f"exclusion_probability must be in [0, 1], "
                 f"got {self._exclusion_probability}"
             )
-        self._minority_heavy = self._find_minority_heavy(partition)
-
-    def _find_minority_heavy(self, partition) -> frozenset[str]:
-        counts = {
-            cid: int((data.y == self._target_class).sum())
-            for cid, data in partition.items()
-        }
-        total_target = sum(counts.values())
-        total = sum(data.y.shape[0] for data in partition.values())
-        if total_target == 0 or total == 0:
-            return frozenset()
-        uniform_share = total_target / total
-        return frozenset(
-            cid
-            for cid, data in partition.items()
-            if counts[cid] / data.y.shape[0] > uniform_share
-        )
+        self._minority_heavy = minority_heavy_clients(partition, self._target_class)
 
     @property
     def minority_heavy_clients(self) -> frozenset[str]:

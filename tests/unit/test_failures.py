@@ -578,6 +578,124 @@ def test_weights_uniform_and_swapped_reject_intensity(partition):
                 )
 
 
+# --- A1/T17: biased-mode deterministic minority-heavy down-weighting ---------
+
+
+def _biased_injector(partition, weight_multiplier=0.5, active=(1, 2), seed=13, rng=None):
+    return WrongSampleWeightsInjector(
+        _spec("aggregation", "wrong_sample_weights", active=active,
+              mode="biased", weight_multiplier=weight_multiplier, target_class=1),
+        partition,
+        rng if rng is not None else Rng(seed),
+    )
+
+
+def test_weights_biased_targets_minority_heavy_only(partition):
+    """Same targeting rule as minority_exclusion: only client_0 is class-1-heavy."""
+    injector = _biased_injector(partition, weight_multiplier=0.5)
+    assert injector.minority_heavy_clients == frozenset({"client_0"})
+    weights = {"client_0": 30.0, "client_1": 10.0, "client_2": 5.0}
+    for round_id in (1, 2):
+        out = injector.weights(weights, round_id)
+        assert out == {"client_0": 15.0, "client_1": 10.0, "client_2": 5.0}
+    assert weights == {"client_0": 30.0, "client_1": 10.0, "client_2": 5.0}  # unmutated
+
+
+def test_weights_biased_inactive_rounds_are_identity(partition):
+    injector = _biased_injector(partition, weight_multiplier=0.1)
+    weights = {"client_0": 30.0, "client_1": 10.0}
+    for round_id in (0, 3, 8):
+        out = injector.weights(weights, round_id)
+        assert out == weights
+        assert out is not weights
+
+
+def test_weights_biased_multiplier_1_is_exact_noop(partition):
+    """T17: multiplier 1.0 leaves every weight untouched, exactly."""
+    injector = _biased_injector(partition, weight_multiplier=1.0)
+    weights = {"client_0": 30.0, "client_1": 10.0, "client_2": 5.0}
+    out = injector.weights(weights, 1)
+    assert out == weights
+    assert out is not weights
+    for cid in weights:
+        assert out[cid] == weights[cid]  # no float drift, not even 1 ulp
+
+
+def test_weights_biased_deterministic_and_seed_independent(partition):
+    """No RNG at all: the output cannot depend on the run seed."""
+    weights = {"client_0": 30.0, "client_1": 10.0, "client_2": 5.0}
+    a = _biased_injector(partition, weight_multiplier=0.1, seed=13)
+    b = _biased_injector(partition, weight_multiplier=0.1, seed=99)
+    for round_id in (1, 2):
+        assert a.weights(weights, round_id) == b.weights(weights, round_id)
+
+
+def test_weights_biased_draws_no_randomness(partition):
+    spy = SpyRng(13, allowed={"failure.aggregation"})
+    injector = _biased_injector(partition, weight_multiplier=0.1, active=(0, 99), rng=spy)
+    injector.weights({"client_0": 1.0, "client_1": 2.0}, 0)
+    assert spy.requested == []  # biased mode is deterministic: no stream consumed
+
+
+def test_weights_biased_normalized_share_monotone_in_multiplier(partition):
+    """Lower multiplier -> strictly lower normalized share for targeted clients."""
+    weights = {"client_0": 30.0, "client_1": 10.0, "client_2": 5.0}
+    shares = []
+    for multiplier in (1.0, 0.5, 0.1):
+        out = _biased_injector(partition, multiplier).weights(weights, 1)
+        total = sum(out.values())
+        shares.append(out["client_0"] / total)
+    assert shares[0] > shares[1] > shares[2]
+
+
+def test_weights_biased_rejects_bad_multiplier(partition):
+    for bad in (0.0, -0.5, 1.5, float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="weight_multiplier"):
+            _biased_injector(partition, weight_multiplier=bad)
+
+
+def test_weights_biased_requires_weight_multiplier(partition):
+    with pytest.raises(ValueError, match="weight_multiplier"):
+        WrongSampleWeightsInjector(
+            _spec("aggregation", "wrong_sample_weights", mode="biased", target_class=1),
+            partition,
+            Rng(13),
+        )
+
+
+def test_weights_biased_requires_target_class(partition):
+    with pytest.raises(ValueError, match="target_class"):
+        WrongSampleWeightsInjector(
+            _spec("aggregation", "wrong_sample_weights",
+                  mode="biased", weight_multiplier=0.5),
+            partition,
+            Rng(13),
+        )
+
+
+def test_weights_biased_rejects_intensity(partition):
+    with pytest.raises(ValueError, match="intensity"):
+        WrongSampleWeightsInjector(
+            _spec("aggregation", "wrong_sample_weights", mode="biased",
+                  weight_multiplier=0.5, target_class=1, intensity=1.0),
+            partition,
+            Rng(13),
+        )
+
+
+def test_weights_other_modes_reject_biased_knobs(partition):
+    """T17: weight_multiplier/target_class are biased-only; other modes fail loud."""
+    for mode in ("uniform", "swapped", "corrupted"):
+        for knob, value in (("weight_multiplier", 0.5), ("target_class", 1)):
+            with pytest.raises(ValueError, match=knob):
+                WrongSampleWeightsInjector(
+                    _spec("aggregation", "wrong_sample_weights",
+                          mode=mode, **{knob: value}),
+                    partition,
+                    Rng(13),
+                )
+
+
 # --- cross-cutting determinism (same spec + seed -> identical transforms) ----
 
 
