@@ -1,0 +1,173 @@
+{
+  "case_id": "coauthor_seed_s103",
+  "cases": [
+    {
+      "failure_type": "minority_exclusion",
+      "falcon": {
+        "notes": [
+          "INVALID_INTERVENTION:local:restore",
+          "INVALID_INTERVENTION:local:inject",
+          "INVALID_INTERVENTION:compression:restore",
+          "INVALID_INTERVENTION:compression:inject",
+          "UNRESOLVED_BETWEEN:selection,aggregation"
+        ],
+        "origin_ranking": [
+          "selection",
+          "aggregation"
+        ],
+        "origin_set": [
+          "selection",
+          "aggregation"
+        ],
+        "outcome": "unresolved",
+        "prediction": "unresolved",
+        "stage_effects": {
+          "aggregation": {
+            "BIS": 0.150317485233476,
+            "SAE": 0.003599753155041241,
+            "SIE": 0.0031422483893414066,
+            "SRE": 0.003599753155041241,
+            "nSIE": 0.150317485233476,
+            "nSRE": 0.17220339536572485,
+            "n_rounds": 1.0,
+            "sham_dev": 0.0
+          },
+          "compression": {
+            "n_rounds": 1.0,
+            "sham_dev": 0.0
+          },
+          "local": {
+            "n_rounds": 1.0,
+            "sham_dev": 0.0
+          },
+          "selection": {
+            "BIS": 0.150317485233476,
+            "SAE": 0.003599753155041241,
+            "SIE": 0.0031422483893414066,
+            "SRE": 0.003599753155041241,
+            "nSIE": 0.150317485233476,
+            "nSRE": 0.17220339536572485,
+            "n_rounds": 1.0,
+            "sham_dev": 0.0
+          }
+        }
+      },
+      "gap": 0.020904077689038014,
+      "ground_truth": "selection",
+      "id": "selection_minority_exclusion",
+      "pair_status": "MATCHED",
+      "passive_scores": {
+        "aggregation": 0.15451572880989356,
+        "compression": 0.3453673330742724,
+        "local": 0.3453673330742724,
+        "selection": 0.28928571428571426
+      },
+      "predictions": {
+        "falcon": "unresolved",
+        "passive": "local",
+        "terminal_only": "selection"
+      },
+      "severity_parameters": {
+        "exclusion_probability": 0.5,
+        "target_class": 1
+      },
+      "terminal_metric": 0.456448481848033
+    },
+    {
+      "failure_type": "aggressive_topk",
+      "falcon": {
+        "notes": [
+          "UNRESOLVED_BETWEEN:compression,aggregation"
+        ],
+        "origin_ranking": [
+          "compression",
+          "aggregation",
+          "selection",
+          "local"
+        ],
+        "origin_set": [
+          "compression",
+          "aggregation"
+        ],
+        "outcome": "unresolved",
+        "prediction": "unresolved",
+        "stage_effects": {
+          "aggregation": {
+            "BIS": 0.08184732530057162,
+            "SAE": 0.003801718878761573,
+            "SIE": 0.002097489059815605,
+            "SRE": 0.003801718878761573,
+            "nSIE": 0.08184732530057161,
+            "nSRE": 0.14834905589384942,
+            "n_rounds": 1.0,
+            "sham_dev": 0.0
+          },
+          "compression": {
+            "BIS": 0.08184732530057162,
+            "SAE": 0.003801718878761573,
+            "SIE": 0.002097489059815605,
+            "SRE": 0.003801718878761573,
+            "nSIE": 0.08184732530057161,
+            "nSRE": 0.14834905589384942,
+            "n_rounds": 1.0,
+            "sham_dev": 0.0
+          },
+          "local": {
+            "BIS": 0.0,
+            "SAE": 0.0,
+            "SIE": 0.0,
+            "SRE": 0.0,
+            "nSIE": 0.0,
+            "nSRE": 0.0,
+            "n_rounds": 1.0,
+            "sham_dev": 0.0
+          },
+          "selection": {
+            "BIS": 0.0,
+            "SAE": 0.0,
+            "SIE": 0.0,
+            "SRE": 0.0,
+            "nSIE": 0.0,
+            "nSRE": 0.0,
+            "n_rounds": 1.0,
+            "sham_dev": 0.0
+          }
+        }
+      },
+      "gap": 0.0256268491623019,
+      "ground_truth": "compression",
+      "id": "compression_aggressive_topk",
+      "pair_status": "MATCHED",
+      "passive_scores": {
+        "aggregation": 0.1562620814449156,
+        "compression": 0.20359802892627235,
+        "local": 0.0346879382613895,
+        "selection": 0.0
+      },
+      "predictions": {
+        "falcon": "unresolved",
+        "passive": "compression",
+        "terminal_only": "selection"
+      },
+      "severity_parameters": {
+        "k_ratio": 0.2725
+      },
+      "terminal_metric": 0.4611712533212969
+    }
+  ],
+  "experiment": "E1",
+  "gap_tolerance": 0.006,
+  "higher_is_better": false,
+  "metric": "loss",
+  "reference_terminal_metric": 0.435544404158995,
+  "seed": 103,
+  "status": "PASS",
+  "target_gap": 0.02,
+  "terminal_training_labels": [
+    "selection",
+    "local",
+    "compression",
+    "aggregation"
+  ],
+  "terminal_training_protocol": "One labeled run per built-in failure type, all generated from the same reference config and experiment seed; labels are injected stages and NearestCentroidStageClassifier receives terminal_features only."
+}

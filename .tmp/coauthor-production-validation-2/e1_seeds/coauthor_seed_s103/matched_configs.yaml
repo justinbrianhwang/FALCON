@@ -1,0 +1,106 @@
+reference:
+  run_id: e1_coauthor_seed_s103_reference
+  seed: 103
+  rounds: 10
+  dataset:
+    name: synthetic
+    num_clients: 10
+    num_features: 20
+    num_classes: 2
+    samples_per_client: 100
+    heterogeneity: 0.0
+    class_separation: 0.4
+    label_noise: 0.1
+    minority_class: 1
+    minority_client_fraction: 0.2
+    seed: 1001
+  selection:
+    clients_per_round: 5
+    policy: uniform
+  local:
+    lr: 0.05
+    local_steps: 3
+    batch_size: 32
+  compression:
+    kind: identity
+    parameters: {}
+  aggregation:
+    rule: weighted_mean
+    parameters: {}
+  failure: null
+failures:
+- run_id: e1_selection_minority_exclusion
+  seed: 103
+  rounds: 10
+  dataset:
+    name: synthetic
+    num_clients: 10
+    num_features: 20
+    num_classes: 2
+    samples_per_client: 100
+    heterogeneity: 0.0
+    class_separation: 0.4
+    label_noise: 0.1
+    minority_class: 1
+    minority_client_fraction: 0.2
+    seed: 1001
+  selection:
+    clients_per_round: 5
+    policy: uniform
+  local:
+    lr: 0.05
+    local_steps: 3
+    batch_size: 32
+  compression:
+    kind: identity
+    parameters: {}
+  aggregation:
+    rule: weighted_mean
+    parameters: {}
+  failure:
+    stage: selection
+    type: minority_exclusion
+    active_rounds:
+    - 2
+    - 9
+    severity: 1
+    parameters:
+      target_class: 1
+      exclusion_probability: 0.5
+- run_id: e1_compression_aggressive_topk
+  seed: 103
+  rounds: 10
+  dataset:
+    name: synthetic
+    num_clients: 10
+    num_features: 20
+    num_classes: 2
+    samples_per_client: 100
+    heterogeneity: 0.0
+    class_separation: 0.4
+    label_noise: 0.1
+    minority_class: 1
+    minority_client_fraction: 0.2
+    seed: 1001
+  selection:
+    clients_per_round: 5
+    policy: uniform
+  local:
+    lr: 0.05
+    local_steps: 3
+    batch_size: 32
+  compression:
+    kind: identity
+    parameters: {}
+  aggregation:
+    rule: weighted_mean
+    parameters: {}
+  failure:
+    stage: compression
+    type: aggressive_topk
+    active_rounds:
+    - 2
+    - 9
+    severity: 1
+    parameters:
+      k_ratio: 0.2725

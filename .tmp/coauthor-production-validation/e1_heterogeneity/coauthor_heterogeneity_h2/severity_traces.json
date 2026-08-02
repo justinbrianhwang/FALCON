@@ -1,0 +1,135 @@
+{
+  "failures": {
+    "compression_aggressive_topk": [
+      {
+        "absolute_error": 0.032232684014339444,
+        "gap": 0.05223268401433945,
+        "iteration": 0,
+        "matched": false,
+        "parameter": "k_ratio",
+        "phase": "bound",
+        "target_gap": 0.02,
+        "terminal_metric": 0.6241735622874619,
+        "value": 0.03
+      },
+      {
+        "absolute_error": 0.02,
+        "gap": 0.0,
+        "iteration": 0,
+        "matched": false,
+        "parameter": "k_ratio",
+        "phase": "bound",
+        "target_gap": 0.02,
+        "terminal_metric": 0.5719408782731225,
+        "value": 1.0
+      },
+      {
+        "absolute_error": 0.022133202700025816,
+        "gap": -0.002133202700025816,
+        "iteration": 1,
+        "matched": false,
+        "parameter": "k_ratio",
+        "phase": "bisection",
+        "target_gap": 0.02,
+        "terminal_metric": 0.5698076755730966,
+        "value": 0.515
+      },
+      {
+        "absolute_error": 0.01873771777149467,
+        "gap": 0.0012622822285053292,
+        "iteration": 2,
+        "matched": false,
+        "parameter": "k_ratio",
+        "phase": "bisection",
+        "target_gap": 0.02,
+        "terminal_metric": 0.5732031605016278,
+        "value": 0.2725
+      },
+      {
+        "absolute_error": 0.0034699121956539743,
+        "gap": 0.023469912195653975,
+        "iteration": 3,
+        "matched": true,
+        "parameter": "k_ratio",
+        "phase": "bisection",
+        "target_gap": 0.02,
+        "terminal_metric": 0.5954107904687764,
+        "value": 0.15125
+      }
+    ],
+    "selection_minority_exclusion": [
+      {
+        "absolute_error": 0.02,
+        "gap": 0.0,
+        "iteration": 0,
+        "matched": false,
+        "parameter": "exclusion_probability",
+        "phase": "bound",
+        "target_gap": 0.02,
+        "terminal_metric": 0.5719408782731225,
+        "value": 0.0
+      },
+      {
+        "absolute_error": 0.030128481303973515,
+        "gap": 0.050128481303973516,
+        "iteration": 0,
+        "matched": false,
+        "parameter": "exclusion_probability",
+        "phase": "bound",
+        "target_gap": 0.02,
+        "terminal_metric": 0.622069359577096,
+        "value": 1.0
+      },
+      {
+        "absolute_error": 0.04236915363682535,
+        "gap": -0.022369153636825345,
+        "iteration": 1,
+        "matched": false,
+        "parameter": "exclusion_probability",
+        "phase": "bisection",
+        "target_gap": 0.02,
+        "terminal_metric": 0.5495717246362971,
+        "value": 0.5
+      },
+      {
+        "absolute_error": 0.006146547907362448,
+        "gap": 0.013853452092637553,
+        "iteration": 2,
+        "matched": false,
+        "parameter": "exclusion_probability",
+        "phase": "bisection",
+        "target_gap": 0.02,
+        "terminal_metric": 0.58579433036576,
+        "value": 0.75
+      },
+      {
+        "absolute_error": 0.01161860672262736,
+        "gap": 0.00838139327737264,
+        "iteration": 3,
+        "matched": false,
+        "parameter": "exclusion_probability",
+        "phase": "bisection",
+        "target_gap": 0.02,
+        "terminal_metric": 0.5803222715504951,
+        "value": 0.875
+      },
+      {
+        "absolute_error": 0.00270666403407847,
+        "gap": 0.01729333596592153,
+        "iteration": 4,
+        "matched": true,
+        "parameter": "exclusion_probability",
+        "phase": "bisection",
+        "target_gap": 0.02,
+        "terminal_metric": 0.589234214239044,
+        "value": 0.9375
+      }
+    ]
+  },
+  "gap_tolerance": 0.005,
+  "higher_is_better": false,
+  "max_iterations": 8,
+  "metric": "loss",
+  "reference_terminal_metric": 0.5719408782731225,
+  "target_gap": 0.02
+}

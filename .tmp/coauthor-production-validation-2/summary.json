@@ -1,0 +1,58 @@
+{
+  "collector": {
+    "output_zip": "F:\\coding\\Federated Learning\\FALCON\\tmp\\Output_2026-08-02_11-38-55.zip",
+    "status": "PASS"
+  },
+  "experiments": [
+    {
+      "name": "e0_crossmachine",
+      "status": "PASS"
+    },
+    {
+      "name": "e1_seeds",
+      "runs": [
+        {
+          "case_id": "coauthor_seed_s101",
+          "status": "PASS"
+        },
+        {
+          "case_id": "coauthor_seed_s102",
+          "status": "PASS"
+        },
+        {
+          "case_id": "coauthor_seed_s103",
+          "status": "PASS"
+        },
+        {
+          "case_id": "coauthor_seed_s104",
+          "status": "PASS"
+        },
+        {
+          "case_id": "coauthor_seed_s105",
+          "status": "PASS"
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "name": "e1_heterogeneity",
+      "runs": [
+        {
+          "case_id": "coauthor_heterogeneity_h0p5",
+          "status": "PASS"
+        },
+        {
+          "case_id": "coauthor_heterogeneity_h1",
+          "status": "PASS"
+        },
+        {
+          "case_id": "coauthor_heterogeneity_h2",
+          "status": "PASS"
+        }
+      ],
+      "status": "PASS"
+    }
+  ],
+  "status": "PASS",
+  "suite": "coauthor"
+}

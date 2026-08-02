@@ -23,15 +23,10 @@ python scripts/prepare_data.py --datasets cifar10,cifar100,mnist,fmnist,svhn
 ## 3. 실험 실행
 
 ```bash
-# 합성 데이터 MVP 실행 (라운드별 정확도 출력)
-python experiments/run_synthetic.py
-
-# 전체 파이프라인: pair 검증 → 개입(restore/inject/sham) → 귀속 리포트
-python -m falcon.reporting --runs-root . --reference ref_001 --failure fail_001 \
-  --metric accuracy --output report.md
+python experiments/run_coauthor_suite.py
 ```
 
-세부 실험 스크립트는 experiments/ 폴더에 추가될 예정이며, 그때마다 이 문서가 갱신됩니다.
+이 명령은 교차 머신 결정성, 독립 시드 반복, 이질성 스윕을 차례로 실행하고 전송할 zip 파일까지 만듭니다.
 
 ## 4. 결과 보내기
 

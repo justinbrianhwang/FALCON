@@ -1,0 +1,10 @@
+{
+  "case_id": "coauthor_heterogeneity_h1",
+  "cases": [],
+  "error": "failure 'selection_minority_exclusion' did not match target gap 0.02 +/- 0.005 in 8 bisection iterations; best gap was 0.0255004 at exclusion_probability=0.953125",
+  "experiment": "E1",
+  "gap_tolerance": 0.005,
+  "metric": "loss",
+  "status": "UNMATCHABLE",
+  "target_gap": 0.02
+}

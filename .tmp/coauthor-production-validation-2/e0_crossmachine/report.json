@@ -1,0 +1,182 @@
+{
+  "configs": [
+    {
+      "boundaries_checked": 15,
+      "boundary_agreement": [
+        {
+          "first_hash": "8e4f789d089a1c005b4610e2bc6df1cbe59f21ddd6b835e71336918efae9577e",
+          "match": true,
+          "round": 0,
+          "second_hash": "8e4f789d089a1c005b4610e2bc6df1cbe59f21ddd6b835e71336918efae9577e",
+          "stage": "selection"
+        },
+        {
+          "first_hash": "0101089c5dde416634f990274c59eacd2649f05a017efea55669e0917052b357",
+          "match": true,
+          "round": 0,
+          "second_hash": "0101089c5dde416634f990274c59eacd2649f05a017efea55669e0917052b357",
+          "stage": "local"
+        },
+        {
+          "first_hash": "451708cf69ca30b714ba03995419dc37a718f527c8c920af2ffe3ab2882344c5",
+          "match": true,
+          "round": 0,
+          "second_hash": "451708cf69ca30b714ba03995419dc37a718f527c8c920af2ffe3ab2882344c5",
+          "stage": "compression"
+        },
+        {
+          "first_hash": "4997b620d9e5307cd5ee294cc986d2a25a32b94e2d4c603490166054984afe11",
+          "match": true,
+          "round": 0,
+          "second_hash": "4997b620d9e5307cd5ee294cc986d2a25a32b94e2d4c603490166054984afe11",
+          "stage": "aggregation"
+        },
+        {
+          "first_hash": "ad48ca9a74b83143b062176ac94e78f049e629af8eea3c6b83e1fda5e157e5c9",
+          "match": true,
+          "round": 0,
+          "second_hash": "ad48ca9a74b83143b062176ac94e78f049e629af8eea3c6b83e1fda5e157e5c9",
+          "stage": "evaluation"
+        },
+        {
+          "first_hash": "9b1baef979ab834562e0f30163cb1c55f54e64a370852073bb934c70f40ddc93",
+          "match": true,
+          "round": 1,
+          "second_hash": "9b1baef979ab834562e0f30163cb1c55f54e64a370852073bb934c70f40ddc93",
+          "stage": "selection"
+        },
+        {
+          "first_hash": "61648595876b64bd9732f4479d34be0f6c5d526e99e3f67ed0fbc5cfa6c6bfaa",
+          "match": true,
+          "round": 1,
+          "second_hash": "61648595876b64bd9732f4479d34be0f6c5d526e99e3f67ed0fbc5cfa6c6bfaa",
+          "stage": "local"
+        },
+        {
+          "first_hash": "a7ba0b9427fbad633d2d9d8b86ab71be335fdce6b7bbf3954b9bed24685ce4c1",
+          "match": true,
+          "round": 1,
+          "second_hash": "a7ba0b9427fbad633d2d9d8b86ab71be335fdce6b7bbf3954b9bed24685ce4c1",
+          "stage": "compression"
+        },
+        {
+          "first_hash": "912dc472769acc9437ef46f17f40dbfe03b372bc4bad27989714507bfbd7393b",
+          "match": true,
+          "round": 1,
+          "second_hash": "912dc472769acc9437ef46f17f40dbfe03b372bc4bad27989714507bfbd7393b",
+          "stage": "aggregation"
+        },
+        {
+          "first_hash": "b19e17e7c60cfdcaadb1d3e0c274a32bb9688ead2dca7be6a5bef88c42f48f9d",
+          "match": true,
+          "round": 1,
+          "second_hash": "b19e17e7c60cfdcaadb1d3e0c274a32bb9688ead2dca7be6a5bef88c42f48f9d",
+          "stage": "evaluation"
+        },
+        {
+          "first_hash": "e647ad17b2a70f11ed7e85597edf20ac2b13f1177109eb9ba6055e077e7b5e52",
+          "match": true,
+          "round": 2,
+          "second_hash": "e647ad17b2a70f11ed7e85597edf20ac2b13f1177109eb9ba6055e077e7b5e52",
+          "stage": "selection"
+        },
+        {
+          "first_hash": "4fbee7d172d796952d58b63017ead13cf7efd7d1ecd3ee26828076ac495fe6a9",
+          "match": true,
+          "round": 2,
+          "second_hash": "4fbee7d172d796952d58b63017ead13cf7efd7d1ecd3ee26828076ac495fe6a9",
+          "stage": "local"
+        },
+        {
+          "first_hash": "05aaa8f7928fd837e0167b96c5b9d2de117770480e557036f00ebbfb8fbaa093",
+          "match": true,
+          "round": 2,
+          "second_hash": "05aaa8f7928fd837e0167b96c5b9d2de117770480e557036f00ebbfb8fbaa093",
+          "stage": "compression"
+        },
+        {
+          "first_hash": "501e4e0aa544bb244ea5880bcb2f3378ebc04d99b7625f6bde795a26d23e4fa1",
+          "match": true,
+          "round": 2,
+          "second_hash": "501e4e0aa544bb244ea5880bcb2f3378ebc04d99b7625f6bde795a26d23e4fa1",
+          "stage": "aggregation"
+        },
+        {
+          "first_hash": "00cd26a40309e4e0aae48c91d65ebd481b47f47985f4c1abd5a82ee29a171c90",
+          "match": true,
+          "round": 2,
+          "second_hash": "00cd26a40309e4e0aae48c91d65ebd481b47f47985f4c1abd5a82ee29a171c90",
+          "stage": "evaluation"
+        }
+      ],
+      "checkpoint_restore": {
+        "reason": "The recorded per-stream RNG snapshot restores and continues equivalently, but recordings do not contain a complete RNG registry and public run() has no model-checkpoint/start-round input for suffix replay.",
+        "restored_streams": [
+          "client_selection"
+        ],
+        "rng_state_restored": true,
+        "round": 1,
+        "status": "API_GAP",
+        "suffix_hashes_compared": false
+      },
+      "config_id": "e0_crossmachine_reference",
+      "failure_specified": false,
+      "max_abs_sham_deviation": 0.0,
+      "mismatched_boundaries": [],
+      "replay_level": "bitwise",
+      "sham_results": [
+        {
+          "deviations": {
+            "accuracy": 0.0,
+            "loss": 0.0
+          },
+          "reason": null,
+          "stage": "selection",
+          "valid": true
+        },
+        {
+          "deviations": {
+            "accuracy": 0.0,
+            "loss": 0.0
+          },
+          "reason": null,
+          "stage": "local",
+          "valid": true
+        },
+        {
+          "deviations": {
+            "accuracy": 0.0,
+            "loss": 0.0
+          },
+          "reason": null,
+          "stage": "compression",
+          "valid": true
+        },
+        {
+          "deviations": {
+            "accuracy": 0.0,
+            "loss": 0.0
+          },
+          "reason": null,
+          "stage": "aggregation",
+          "valid": true
+        },
+        {
+          "deviations": {
+            "accuracy": 0.0,
+            "loss": 0.0
+          },
+          "reason": null,
+          "stage": "evaluation",
+          "valid": true
+        }
+      ],
+      "sham_round": 1,
+      "sham_tolerance": 1e-12,
+      "status": "PASS"
+    }
+  ],
+  "experiment": "E0",
+  "replay_level": "bitwise",
+  "status": "PASS"
+}

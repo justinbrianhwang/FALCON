@@ -1,0 +1,32 @@
+# Exact effective config from tests/fixtures/golden_stage_hashes.json.
+# Keep the seed and every calibrated task value unchanged: this run exists so
+# its boundary hashes can be compared directly across machines.
+- run_id: e0_crossmachine_reference
+  seed: 42
+  rounds: 3
+  dataset:
+    name: synthetic
+    num_clients: 5
+    num_features: 10
+    num_classes: 2
+    samples_per_client: 80
+    heterogeneity: 0.0
+    class_separation: 0.4
+    label_noise: 0.1
+    minority_class: null
+    minority_client_fraction: 0.2
+    seed: 1001
+  selection:
+    clients_per_round: 3
+    policy: uniform
+  local:
+    lr: 0.5
+    local_steps: 8
+    batch_size: 16
+  compression:
+    kind: identity
+    parameters: {}
+  aggregation:
+    rule: weighted_mean
+    parameters: {}
+  failure: null

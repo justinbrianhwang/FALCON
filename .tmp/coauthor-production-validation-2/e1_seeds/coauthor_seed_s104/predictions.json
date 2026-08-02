@@ -1,0 +1,25 @@
+{
+  "cases": [
+    {
+      "falcon_outcome": "unresolved",
+      "ground_truth": "selection",
+      "id": "selection_minority_exclusion",
+      "predictions": {
+        "falcon": "unresolved",
+        "passive": "local",
+        "terminal_only": "selection"
+      }
+    },
+    {
+      "falcon_outcome": "unresolved",
+      "ground_truth": "compression",
+      "id": "compression_aggressive_topk",
+      "predictions": {
+        "falcon": "unresolved",
+        "passive": "compression",
+        "terminal_only": "selection"
+      }
+    }
+  ],
+  "terminal_training_protocol": "One labeled run per built-in failure type, all generated from the same reference config and experiment seed; labels are injected stages and NearestCentroidStageClassifier receives terminal_features only."
+}
