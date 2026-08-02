@@ -28,6 +28,16 @@ python experiments/run_coauthor_suite.py
 
 이 명령은 교차 머신 결정성, 독립 시드 반복, 이질성 스윕을 차례로 실행하고 전송할 zip 파일까지 만듭니다.
 
+## 3-1. 실험2 (severity 캘리브레이션 + 스케일 측정)
+
+```bash
+python experiments/run_coauthor_suite2.py
+```
+
+실패 4종 × 심각도 3단계의 성능 갭 곡선과, 클라이언트 10/25/50 스케일에서의
+실행 시간·저장 용량을 측정합니다. 데이터 다운로드 불필요(synthetic), 몇 분이면 끝나고
+마지막 줄에 보낼 zip 경로가 출력됩니다.
+
 ## 4. 결과 보내기
 
 실험이 끝나면 아래 한 줄 실행 후, 생성된 zip 파일을 보내주세요.
