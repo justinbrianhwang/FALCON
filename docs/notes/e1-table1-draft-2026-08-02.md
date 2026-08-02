@@ -1,5 +1,11 @@
 # E1 stage-localization results — Table 1 draft (2026-08-02)
 
+> **Official reproduction:** `python experiments/run_main_matrix.py` (configs/experiments/main/
+> matrix.yaml) regenerates results/main_matrix/table1.{csv,md} — local matrix (both pairs,
+> seeds 1–5 + 101–105): **FALCON 34/34, passive 18/34, terminal-only 11/34**, 3 predeclared
+> exclusions (pair B seeds 102/104/105, unmatchable band, reasons in the exclusions table).
+> The co-author machine's independent pair-A runs (16/16) are additional evidence on top.
+
 Setting: synthetic Tier-0 task (T11-calibrated: class_separation 0.4, label_noise 0.1),
 gap-matched failure pairs (target loss-gap 0.02 ± 0.006), two failure families
 (selection/minority_exclusion vs compression/aggressive_topk), window interventions (T13),
