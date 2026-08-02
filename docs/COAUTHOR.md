@@ -38,6 +38,17 @@ python experiments/run_coauthor_suite2.py
 실행 시간·저장 용량을 측정합니다. 데이터 다운로드 불필요(synthetic), 몇 분이면 끝나고
 마지막 줄에 보낼 zip 경로가 출력됩니다.
 
+## 3-2. 실험3 (CIFAR-10 스테이지 귀속 — 밤에 걸어두세요)
+
+```bash
+python scripts/prepare_data.py --datasets cifar10   # 최초 1회, ~170MB 자동 다운로드
+python experiments/run_coauthor_cifar.py
+```
+
+CIFAR-10 + CNN에서 reference 1회 + 스테이지별 실패 4종을 돌리고, 각 쌍에 대해 FALCON
+귀속(restore/inject/sham)까지 수행합니다. **CPU로 수 시간 걸리니 자기 전에 걸어두는 것을
+권장합니다.** 끝나면 마지막 줄에 보낼 zip 경로가 출력됩니다.
+
 ## 4. 결과 보내기
 
 실험이 끝나면 아래 한 줄 실행 후, 생성된 zip 파일을 보내주세요.
