@@ -65,7 +65,9 @@ def local_train(
     model = build_model(model_cfg, dataset_cfg)  # init irrelevant: load_flat overwrites
     load_flat(model, model_params)
     model.train()
-    optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr)
+    # torch.optim rejects negative learning rates, but lr_misconfig uses a
+    # negative multiplier to model a sign error (the numpy path supports it).
+    optimizer = torch.optim.SGD(model.parameters(), lr=abs(cfg.lr))
 
     x_all = torch.from_numpy(np.ascontiguousarray(data.x))
     y_all = torch.from_numpy(np.ascontiguousarray(data.y))
@@ -78,6 +80,10 @@ def local_train(
         logits = model(x_all[idx])
         loss = F.cross_entropy(logits, y_all[idx])
         loss.backward()
+        if cfg.lr < 0:
+            for parameter in model.parameters():
+                if parameter.grad is not None:
+                    parameter.grad.neg_()
         optimizer.step()
         loss_history.append(float(loss.detach()))
     update = flatten(model) - np.asarray(model_params, dtype=np.float32)

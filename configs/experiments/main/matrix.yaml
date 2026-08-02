@@ -5,3 +5,9 @@ experiments:
   - name: pair_b
     config: e2_local_vs_aggregation.yaml
     seeds: [1, 2, 3, 4, 5, 101, 102, 103, 104, 105]
+  - name: mnist_pair_a
+    config: e2_mnist_pairA.yaml
+    seeds: [1, 2, 3, 4, 5]
+  - name: mnist_pair_b
+    config: e2_mnist_pairB.yaml
+    seeds: [1, 2, 3, 4, 5]

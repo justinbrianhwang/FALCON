@@ -1,0 +1,96 @@
+# E2 MNIST pair B: local/lr_misconfig vs aggregation/biased_weights.
+# Measured accuracy-gap endpoint ranges (mild..severe), seeds 1-5 respectively:
+#   local:       [0,.7167] [0,.6163] [0,.6734] [0,.6716] [0,.6906]
+#   aggregation: [0,.1847] [0,.1133] [0,.0656] [0,.0755] [0,.1112]
+# The shared all-family/all-seed attainable region is [0,.0656]; the pinned
+# band [.040,.060] lies inside it.
+seeds: [1, 2, 3, 4, 5]
+
+experiment:
+  case_id: mnist_e2b
+  metric: accuracy
+  higher_is_better: true
+  target_gap: 0.050
+  gap_tolerance: 0.010
+  max_iterations: 8
+  min_gap: 0.040
+  sham_tolerance: 1.0e-9
+
+  reference:
+    rounds: 5
+    dataset:
+      name: mnist
+      num_clients: 10
+      num_classes: 10
+      dirichlet_alpha: 0.5
+      minority_class: 1
+      seed: 1001
+    model:
+      name: small_cnn
+      parameters: {}
+    selection:
+      clients_per_round: 5
+      policy: uniform
+    local:
+      lr: 0.1
+      local_steps: 20
+      batch_size: 64
+    compression:
+      kind: identity
+      parameters: {}
+    aggregation:
+      rule: weighted_mean
+      parameters: {}
+
+  failures:
+    - id: local_lr_misconfig
+      stage: local
+      type: lr_misconfig
+      active_rounds: [1, 4]
+      parameters:
+        fraction: 1.0
+      severity:
+        parameter: lr_multiplier
+        bounds: [-1.0, 1.0]
+        higher_is_more_severe: false
+    - id: aggregation_biased_weights
+      stage: aggregation
+      type: wrong_sample_weights
+      active_rounds: [1, 4]
+      parameters:
+        mode: biased
+        target_class: 1
+      severity:
+        parameter: weight_multiplier
+        bounds: [0.05, 1.0]
+        higher_is_more_severe: false
+
+  terminal_training_failures:
+    - stage: selection
+      type: minority_exclusion
+      active_rounds: [1, 4]
+      severity: 1
+      parameters:
+        target_class: 1
+        exclusion_probability: 0.75
+    - stage: local
+      type: lr_misconfig
+      active_rounds: [1, 4]
+      severity: 1
+      parameters:
+        fraction: 0.5
+        # A -1.0 exemplar can overflow SmallCNN terminal features; stalled
+        # training remains a finite, stage-distinct Tier-1 baseline.
+        lr_multiplier: 0.0
+    - stage: compression
+      type: aggressive_topk
+      active_rounds: [1, 4]
+      severity: 1
+      parameters:
+        k_ratio: 0.05
+    - stage: aggregation
+      type: wrong_sample_weights
+      active_rounds: [1, 4]
+      severity: 1
+      parameters:
+        mode: corrupted

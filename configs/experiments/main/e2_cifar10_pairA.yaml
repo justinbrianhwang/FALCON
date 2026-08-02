@@ -1,0 +1,93 @@
+# E2 CIFAR-10 pair A, prepared but intentionally unrun in T20.
+# Cost estimate: the reference takes about 7 minutes per 60-round CPU run; a
+# full two-family search plus recorded baselines and interventions can require
+# up to 52 run equivalents (~6 CPU-hours/seed, ~30 CPU-hours for seeds 1-5).
+# target_gap=1 is an intentionally unattainable calibration sentinel: first run
+# endpoint measurement on a dedicated pass, then pin a shared attainable band.
+seeds: [1, 2, 3, 4, 5]
+
+experiment:
+  case_id: cifar10_e2a_unrun
+  metric: accuracy
+  higher_is_better: true
+  target_gap: 1.0
+  gap_tolerance: 0.0
+  max_iterations: 8
+  min_gap: 0.0
+  sham_tolerance: 1.0e-9
+
+  reference:
+    rounds: 60
+    dataset:
+      name: cifar10
+      num_clients: 50
+      num_classes: 10
+      dirichlet_alpha: 0.1
+      minority_class: 1
+      seed: 1001
+    model:
+      name: small_cnn
+      parameters: {}
+    selection:
+      clients_per_round: 5
+      policy: uniform
+    local:
+      lr: 0.05
+      local_steps: 10
+      batch_size: 64
+    compression:
+      kind: identity
+      parameters: {}
+    aggregation:
+      rule: weighted_mean
+      parameters: {}
+
+  failures:
+    - id: selection_minority_exclusion
+      stage: selection
+      type: minority_exclusion
+      active_rounds: [1, 59]
+      parameters:
+        target_class: 1
+      severity:
+        parameter: exclusion_probability
+        bounds: [0.0, 1.0]
+        higher_is_more_severe: true
+    - id: compression_aggressive_topk
+      stage: compression
+      type: aggressive_topk
+      active_rounds: [1, 59]
+      parameters: {}
+      severity:
+        parameter: k_ratio
+        bounds: [0.03, 1.0]
+        higher_is_more_severe: false
+
+  terminal_training_failures:
+    - stage: selection
+      type: minority_exclusion
+      active_rounds: [1, 59]
+      severity: 1
+      parameters:
+        target_class: 1
+        exclusion_probability: 0.75
+    - stage: local
+      type: lr_misconfig
+      active_rounds: [1, 59]
+      severity: 1
+      parameters:
+        fraction: 0.5
+        # Avoid an overflowing SmallCNN terminal-baseline exemplar.
+        lr_multiplier: 0.0
+    - stage: compression
+      type: aggressive_topk
+      active_rounds: [1, 59]
+      severity: 1
+      parameters:
+        k_ratio: 0.05
+    - stage: aggregation
+      type: wrong_sample_weights
+      active_rounds: [1, 59]
+      severity: 1
+      parameters:
+        mode: corrupted

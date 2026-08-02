@@ -29,10 +29,19 @@ torch = pytest.importorskip(
 )
 
 from falcon.data_paths import processed_path
+from falcon.pipeline.models import build_model, flatten
 from falcon.pipeline.runner import run
+from falcon.pipeline.synthetic_data import ClientData
+from falcon.pipeline.torch_local import local_train
 from falcon.recorder.recorder import Recorder
 from falcon.replay.rng import Rng
-from falcon.schema import FailureSpecification, RunConfig
+from falcon.schema import (
+    DatasetConfig,
+    FailureSpecification,
+    LocalConfig,
+    RunConfig,
+)
+from falcon.schema.config import ModelConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CASES_DIR = REPO_ROOT / "configs" / "cases"
@@ -60,6 +69,32 @@ def _first_divergence(reference_hashes, failure_hashes, rounds):
             if reference_hashes[key] != failure_hashes[key]:
                 return key
     return None
+
+
+def test_torch_local_supports_negative_lr_sign_error():
+    dataset = DatasetConfig(name="mnist", num_clients=1, num_classes=10)
+    model_cfg = ModelConfig(name="small_cnn")
+    initial = flatten(build_model(model_cfg, dataset, Rng(7)))
+    data = ClientData(
+        x=np.zeros((4, 1, 28, 28), dtype=np.float32),
+        y=np.array([0, 1, 2, 3], dtype=np.int64),
+    )
+
+    def train(lr):
+        return local_train(
+            initial,
+            "client_0",
+            data,
+            0,
+            LocalConfig(lr=lr, local_steps=1, batch_size=4),
+            Rng(11),
+            model_cfg=model_cfg,
+            dataset_cfg=dataset,
+        )
+
+    positive = train(0.1)
+    negative = train(-0.1)
+    np.testing.assert_allclose(negative.update, -positive.update, rtol=1e-4, atol=1e-7)
 
 
 @pytest.fixture(scope="module")
