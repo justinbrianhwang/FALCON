@@ -27,12 +27,18 @@ class AggregationConfig(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
+class ModelConfig(BaseModel):
+    name: Literal["logistic_regression", "small_cnn"] = "logistic_regression"
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
 class DatasetConfig(BaseModel):
-    name: Literal["synthetic"] = "synthetic"
+    name: Literal["synthetic", "mnist", "fmnist", "cifar10", "cifar100", "svhn"] = "synthetic"
     num_clients: int
-    num_features: int = 20
+    num_features: int = 20  # synthetic only
     num_classes: int = 2
-    samples_per_client: int = 100
+    samples_per_client: int = 100  # synthetic only
+    dirichlet_alpha: Optional[float] = None  # real datasets: None = IID, else Dirichlet(alpha)
     heterogeneity: float = 0.0  # 0 = IID; larger = more client shift
     class_separation: float = 1.0  # cluster-mean distance / noise scale; lower = harder task
     label_noise: float = 0.0  # fraction of training labels flipped (deterministic from seed)
@@ -46,6 +52,7 @@ class RunConfig(BaseModel):
     seed: int
     rounds: int
     dataset: DatasetConfig
+    model: ModelConfig = Field(default_factory=ModelConfig)
     selection: SelectionConfig
     local: LocalConfig
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
