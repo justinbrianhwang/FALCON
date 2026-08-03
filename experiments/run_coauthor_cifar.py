@@ -27,13 +27,13 @@ from falcon.reporting.report import render_markdown  # noqa: E402
 from falcon.schema import FailureSpecification, RunConfig, RunMetadata  # noqa: E402
 
 FAILURES = [
-    # CIFAR's weak-model regime (~0.16 acc) hides selection damage in GLOBAL accuracy —
-    # first co-author run measured gap 0.0016 at p=0.9/rounds(10,39). Max severity + longer
-    # window; if the gap is still insufficient that is itself a finding (Plan §14.10: selection
-    # failures need minority-recall outcomes, not global accuracy).
+    # target_class 5: co-author run 2 (2026-08-03) showed the weak-regime reference learns ONLY
+    # classes 0 (0.585) and 5 (0.953) — every other class sits at ~0 accuracy, so failures
+    # targeting them have nothing to damage (selection gap was 0.0001 even at p=1.0). Minority-
+    # targeted failures must aim at a class the reference actually learned (Plan §14.10).
     ("selection", FailureSpecification(
         stage="selection", type="minority_exclusion", active_rounds=(10, 49), severity=3,
-        parameters={"target_class": 1, "exclusion_probability": 1.0})),
+        parameters={"target_class": 5, "exclusion_probability": 1.0})),
     ("local", FailureSpecification(
         stage="local", type="lr_misconfig", active_rounds=(10, 49), severity=2,
         parameters={"fraction": 0.5, "lr_multiplier": -1.0})),
@@ -42,7 +42,7 @@ FAILURES = [
         parameters={"k_ratio": 0.05})),
     ("aggregation", FailureSpecification(
         stage="aggregation", type="wrong_sample_weights", active_rounds=(10, 49), severity=2,
-        parameters={"mode": "biased", "target_class": 1, "weight_multiplier": 0.1})),
+        parameters={"mode": "biased", "target_class": 5, "weight_multiplier": 0.1})),
 ]
 
 
@@ -57,7 +57,10 @@ def _record(root: Path, cfg: RunConfig) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", action="store_true", help="tiny MNIST mechanics check")
+    ap.add_argument("--cases", default="all",
+                    help="comma list of selection,local,compression,aggregation (default all)")
     args = ap.parse_args()
+    wanted = None if args.cases == "all" else {s.strip() for s in args.cases.split(",")}
 
     base = yaml.safe_load((REPO / "configs" / "cases" / "cifar10_reference.yaml").read_text(encoding="utf-8"))
     out = REPO / "results" / ("coauthor_cifar_smoke" if args.smoke else "coauthor_cifar")
@@ -75,6 +78,8 @@ def main() -> None:
 
     summary = []
     for name, spec in FAILURES:
+        if wanted is not None and name not in wanted:
+            continue
         spec = spec.model_copy(update={"active_rounds": active})
         fail_id = f"fail_{name}"
         cfg = RunConfig(**{**base, "run_id": fail_id, "failure": spec})
