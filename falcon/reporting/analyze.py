@@ -25,9 +25,12 @@ def _metadata(runs_root: Path, run_id: str) -> RunMetadata:
     return RunMetadata.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
 
-def load_ground_truth(runs_root: Path, failure_run_id: str) -> FailureSpecification | None:
+def load_ground_truth(
+    runs_root: Path, failure_run_id: str
+) -> FailureSpecification | list[FailureSpecification] | None:
     """Load the benchmark failure specification recorded for a run."""
-    return _metadata(Path(runs_root), failure_run_id).failure
+    metadata = _metadata(Path(runs_root), failure_run_id)
+    return metadata.failure or metadata.failures or None
 
 
 def _persistent_divergence_window(
@@ -101,28 +104,50 @@ def analyze_pair(
     round_window: tuple[int, int] | None = None
     if rounds is None:
         chosen_round = pair.first_divergence_round
-        if chosen_round is None:
-            if failure.failure is None:
-                return (
-                    AttributionReport(
-                        pair=pair,
-                        outcome="unresolved",
-                        failure_gap={},
-                        stage_effects={},
-                        origin_ranking=[],
-                        origin_set=[],
-                        roles={},
-                        notes=["MISSING_FAILURE_SPECIFICATION"],
-                    ),
-                    [],
-                )
-            chosen_round = failure.failure.active_rounds[0]
-        failure_window = failure.failure.active_rounds if failure.failure else None
-        if failure_window and failure_window[0] < failure_window[1]:
-            round_window = failure_window
+        if failure.failure is None and failure.failures:
+            round_window = (
+                min(spec.active_rounds[0] for spec in failure.failures),
+                max(spec.active_rounds[1] for spec in failure.failures),
+            )
+            if chosen_round is None:
+                chosen_round = round_window[0]
         else:
-            round_window = _persistent_divergence_window(
-                runs_root, reference_run_id, failure_run_id
+            if chosen_round is None:
+                if failure.failure is None:
+                    return (
+                        AttributionReport(
+                            pair=pair,
+                            outcome="unresolved",
+                            failure_gap={},
+                            stage_effects={},
+                            origin_ranking=[],
+                            origin_set=[],
+                            roles={},
+                            notes=["MISSING_FAILURE_SPECIFICATION"],
+                        ),
+                        [],
+                    )
+                chosen_round = failure.failure.active_rounds[0]
+            failure_window = failure.failure.active_rounds if failure.failure else None
+            if failure_window and failure_window[0] < failure_window[1]:
+                round_window = failure_window
+            else:
+                round_window = _persistent_divergence_window(
+                    runs_root, reference_run_id, failure_run_id
+                )
+        if chosen_round is None:
+            return (
+                AttributionReport(
+                    pair=pair,
+                    outcome="unresolved",
+                    failure_gap={},
+                    stage_effects={},
+                    origin_ranking=[],
+                    origin_set=[],
+                    roles={},
+                    notes=["MISSING_FAILURE_SPECIFICATION"],
+                ),
+                [],
             )
         rounds = [round_window[0] if round_window else chosen_round]
 
@@ -202,6 +227,21 @@ def analyze_pair(
         epsilon_tie=epsilon_tie,
         decisive_margin=decisive_margin,
     )
+    if failure.failures and report.outcome == "unique_origin":
+        first_origin_with_carriers = (
+            bool(report.origin_ranking)
+            and report.origin_ranking[0] == pair.first_divergence_stage
+            and any(
+                note.startswith("CARRIER_TIE_RESOLVED:") for note in report.notes
+            )
+        )
+        if not first_origin_with_carriers:
+            report.outcome = "unresolved"
+            report.origin_set = list(report.origin_ranking)
+            report.roles.update(
+                {stage: "unresolved_candidate" for stage in report.origin_set}
+            )
+            report.notes.append("COMPOUND_FAILURE_AMBIGUITY")
     return report, interventions
 
 

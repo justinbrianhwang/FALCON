@@ -1,7 +1,7 @@
 """Run configuration schemas (contract v0.1). YAML in configs/ maps 1:1 onto RunConfig."""
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .states import FailureSpecification
 
@@ -58,3 +58,13 @@ class RunConfig(BaseModel):
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
     failure: Optional[FailureSpecification] = None
+    failures: list[FailureSpecification] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_failures(self):
+        if self.failure is not None and self.failures:
+            raise ValueError("failure and failures cannot both be set")
+        stages = [failure.stage for failure in self.failures]
+        if len(stages) != len(set(stages)):
+            raise ValueError("compound failures must target different stages")
+        return self

@@ -29,7 +29,7 @@ def render_markdown(
     report: AttributionReport,
     interventions: list[InterventionResult],
     *,
-    ground_truth: FailureSpecification | None,
+    ground_truth: FailureSpecification | list[FailureSpecification] | None,
 ) -> str:
     """Render measured evidence, inferred roles, and benchmark truth separately."""
     pair = report.pair
@@ -147,7 +147,23 @@ def render_markdown(
     if not pair.warnings and not report.notes and not invalid:
         lines.append("- No additional warnings.")
 
-    if ground_truth is not None:
+    if isinstance(ground_truth, list):
+        lines.extend(
+            [
+                "",
+                "## Ground truth (benchmark)",
+                "",
+                "- Injected stages: "
+                + ", ".join(f"`{spec.stage}`" for spec in ground_truth),
+                "- Injected failure types: "
+                + ", ".join(f"`{spec.type}`" for spec in ground_truth),
+                "- Predicted origin ranking: "
+                + (", ".join(f"`{stage}`" for stage in report.origin_ranking) or "unresolved"),
+                "- Predicted origin set: "
+                + (", ".join(f"`{stage}`" for stage in report.origin_set) or "none"),
+            ]
+        )
+    elif ground_truth is not None:
         resolved = report.outcome == "unique_origin" and bool(report.origin_ranking)
         predicted = report.origin_ranking[0] if resolved else "unresolved"
         verdict = "yes" if predicted == ground_truth.stage else "no"

@@ -309,8 +309,9 @@ def _check_compatible_runs(target: RunMetadata, source: RunMetadata) -> str | No
     source_config = dict(source.config)
     if target_config.get("dataset") != source_config.get("dataset"):
         return "incompatible_runs: dataset config differs"
-    target_config.pop("failure", None)
-    source_config.pop("failure", None)
+    for key in ("failure", "failures"):
+        target_config.pop(key, None)
+        source_config.pop(key, None)
     if target_config != source_config:
         delta = sorted(
             key

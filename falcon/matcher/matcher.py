@@ -82,21 +82,35 @@ def _failure_only_delta(
 ) -> bool:
     reference_config = dict(reference.config)
     failure_config = dict(failure.config)
-    if "failure" not in failure_config:
+    if failure.failure is not None and not failure.failures:
+        key = "failure"
+        configured = failure.failure
+    elif failure.failure is None and failure.failures:
+        key = "failures"
+        configured = failure.failures
+    else:
         return False
 
-    reference_failure = reference_config.pop("failure", None)
-    configured_failure = failure_config.pop("failure")
+    if key not in failure_config:
+        return False
+    reference_failure = reference_config.pop(key, None)
+    configured_failure = failure_config.pop(key)
     try:
-        parsed_failure = FailureSpecification.model_validate(configured_failure)
+        if key == "failure":
+            parsed_failure = FailureSpecification.model_validate(configured_failure)
+        else:
+            parsed_failure = [
+                FailureSpecification.model_validate(spec)
+                for spec in configured_failure
+            ]
     except (TypeError, ValueError, ValidationError):
         return False
 
     return (
         reference.failure is None
-        and failure.failure is not None
-        and reference_failure is None
-        and parsed_failure == failure.failure
+        and not reference.failures
+        and reference_failure in (None, [])
+        and parsed_failure == configured
         and reference_config == failure_config
     )
 
@@ -170,10 +184,14 @@ def validate_pair(
     except Exception:
         hashes_loadable = False
 
-    failure_spec = failure.failure if failure is not None else None
+    failure_specs = (
+        ([failure.failure] if failure.failure is not None else failure.failures)
+        if failure is not None
+        else []
+    )
     pre_failure: set[tuple[int, str]] = set()
-    if hashes_loadable and failure_spec is not None:
-        start_round = failure_spec.active_rounds[0]
+    if hashes_loadable and failure_specs:
+        start_round = min(spec.active_rounds[0] for spec in failure_specs)
         pre_failure = {
             boundary
             for boundary in reference_boundaries | failure_boundaries
@@ -206,7 +224,7 @@ def validate_pair(
     warnings: list[str] = []
     if metadata_loadable and not checks["same_code_version"]:
         warnings.append("code versions differ - causal comparison may be unreliable")
-    if hashes_loadable and failure_spec is not None and not pre_failure:
+    if hashes_loadable and failure_specs and not pre_failure:
         warnings.append(
             "no pre-failure boundaries recorded - match rests on config/seed only"
         )
@@ -214,25 +232,30 @@ def validate_pair(
         warnings.append("runs are identical - no failure effect recorded")
     if (
         first_stage is not None
-        and failure_spec is not None
-        and first_stage != failure_spec.stage
+        and failure_specs
+        and first_stage not in {spec.stage for spec in failure_specs}
     ):
+        configured_stages = [spec.stage for spec in failure_specs]
         warnings.append(
             f"first divergence stage {first_stage!r} differs from configured "
-            f"failure stage {failure_spec.stage!r} in round {first_round}"
+            f"failure stage(s) {configured_stages!r} in round {first_round}"
         )
     if (
         first_round is not None
-        and failure_spec is not None
+        and failure_specs
         and not (
-            failure_spec.active_rounds[0]
+            min(spec.active_rounds[0] for spec in failure_specs)
             <= first_round
-            <= failure_spec.active_rounds[1]
+            <= max(spec.active_rounds[1] for spec in failure_specs)
         )
     ):
+        failure_window = (
+            min(spec.active_rounds[0] for spec in failure_specs),
+            max(spec.active_rounds[1] for spec in failure_specs),
+        )
         warnings.append(
             f"first divergence round {first_round} falls outside configured "
-            f"failure window {failure_spec.active_rounds}"
+            f"failure window {failure_window}"
         )
 
     fatal_checks = {

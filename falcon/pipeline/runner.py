@@ -77,15 +77,20 @@ def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeSt
         model_kwargs = {"model_cfg": cfg.model, "dataset_cfg": cfg.dataset}
     pool = sorted(partition)
 
-    # T4: one injector per run; None for reference runs, which then execute
-    # exactly as before (byte-identical stage hashes).
-    injector = None
+    # T4/T23: one injector per failure specification, chained in list order.
+    injectors = []
     if cfg.failure is not None:
-        injector = build_injector(cfg.failure, partition, rng)
+        injectors.append(build_injector(cfg.failure, partition, rng))
+    else:
+        injectors.extend(
+            build_injector(failure, partition, rng) for failure in cfg.failures
+        )
 
     outcomes: list[OutcomeState] = []
     for round_id in range(cfg.rounds):
-        round_pool = pool if injector is None else injector.candidate_pool(pool, round_id)
+        round_pool = pool
+        for injector in injectors:
+            round_pool = injector.candidate_pool(round_pool, round_id)
         selection = _stage(
             "selection", lambda: select_clients(round_pool, round_id, cfg.selection, rng)
         )
@@ -95,48 +100,50 @@ def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeSt
 
         # Per-client stages are recorded ONCE per stage, as a list of states
         # (CONTRACTS §1), never once per client.
-        local_states = [
-            _stage(
-                "local",
-                lambda cid=cid: local_fn(
-                    params,
-                    cid,
-                    partition[cid],
-                    round_id,
-                    cfg.local
-                    if injector is None
-                    else injector.local_cfg(cid, cfg.local, round_id),
-                    rng,
-                    **model_kwargs,
-                ),
+        local_states = []
+        for cid in selection.selected_ids:
+            local_cfg = cfg.local
+            for injector in injectors:
+                local_cfg = injector.local_cfg(cid, local_cfg, round_id)
+            local_states.append(
+                _stage(
+                    "local",
+                    lambda cid=cid, local_cfg=local_cfg: local_fn(
+                        params,
+                        cid,
+                        partition[cid],
+                        round_id,
+                        local_cfg,
+                        rng,
+                        **model_kwargs,
+                    ),
+                )
             )
-            for cid in selection.selected_ids
-        ]
         if overlay is not None:
             local_states = overlay.override(round_id, "local", local_states)
         _record(recorder, round_id, "local", local_states)
 
-        compressed = [
-            _stage(
-                "compression",
-                lambda s=state: compress(
-                    s,
-                    cfg.compression
-                    if injector is None
-                    else injector.compression_cfg(
-                        s.client_id, cfg.compression, round_id
+        compressed = []
+        for state in local_states:
+            compression_cfg = cfg.compression
+            for injector in injectors:
+                compression_cfg = injector.compression_cfg(
+                    state.client_id, compression_cfg, round_id
+                )
+            compressed.append(
+                _stage(
+                    "compression",
+                    lambda state=state, compression_cfg=compression_cfg: compress(
+                        state, compression_cfg, rng
                     ),
-                    rng,
-                ),
+                )
             )
-            for state in local_states
-        ]
         if overlay is not None:
             compressed = overlay.override(round_id, "compression", compressed)
         _record(recorder, round_id, "compression", compressed)
 
         weights = {s.client_id: float(s.num_examples) for s in local_states}
-        if injector is not None:
+        for injector in injectors:
             weights = injector.weights(weights, round_id)
         aggregation = _stage(
             "aggregation",

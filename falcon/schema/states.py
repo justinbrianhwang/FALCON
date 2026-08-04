@@ -146,4 +146,5 @@ class RunMetadata(BaseModel):
     rounds: int
     config: dict[str, Any]
     failure: Optional[FailureSpecification] = None
+    failures: list[FailureSpecification] = Field(default_factory=list)
     code_version: Optional[str] = None
