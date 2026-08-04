@@ -60,6 +60,17 @@ class OutcomeState(_ArrayModel):
     metrics: dict[str, float]  # e.g. {"accuracy": ..., "loss": ...}
     per_class: dict[str, dict[str, float]] = Field(default_factory=dict)
 
+    def flat_metrics(self) -> dict[str, float]:
+        """Metrics plus per-class entries as ``class_<c>_<name>`` (Plan 14.10).
+
+        Read-time view only; the recorded state (and its hash) is unchanged.
+        """
+        out = dict(self.metrics)
+        for cls, entries in self.per_class.items():
+            for name, value in entries.items():
+                out[f"class_{cls}_{name}"] = value
+        return out
+
 
 class FailureSpecification(BaseModel):
     stage: Stage

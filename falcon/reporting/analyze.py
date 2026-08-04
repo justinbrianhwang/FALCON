@@ -133,8 +133,8 @@ def analyze_pair(
         failure_outcome = Recorder(runs_root, failure_run_id).load(
             failure.rounds - 1, "evaluation"
         )
-        m_ref = reference_outcome.metrics[metric]
-        m_fail = failure_outcome.metrics[metric]
+        m_ref = reference_outcome.flat_metrics()[metric]
+        m_fail = failure_outcome.flat_metrics()[metric]
     except KeyError:
         return (
             AttributionReport(

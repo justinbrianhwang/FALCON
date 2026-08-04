@@ -187,11 +187,14 @@ def test_restore_at_pre_divergence_bystander_stage_does_not_recover(pair):
     result = apply_intervention(_spec(stage="local"), pair.root)
 
     assert result.valid, result.reason
-    assert result.outcome_metrics == {
+    # outcome_metrics also carries flattened class_<c>_* entries; the failure
+    # metrics must replay unchanged
+    expected = {
         **pair.fail_final,
         "round_2_accuracy": pair.fail_round_metrics["accuracy"],
         "round_2_loss": pair.fail_round_metrics["loss"],
     }
+    assert expected.items() <= result.outcome_metrics.items()
     assert result.outcome_metrics["loss"] != pair.ref_final["loss"]
 
 

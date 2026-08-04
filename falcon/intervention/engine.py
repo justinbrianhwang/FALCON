@@ -557,10 +557,10 @@ def apply_intervention(
 
         # final round's metrics plus "round_<t>_<metric>" per boundary round
         # (single round: the intervention round; window: t1 and t2)
-        outcome_metrics: dict[str, float] = dict(outcomes[-1].metrics)
+        outcome_metrics: dict[str, float] = outcomes[-1].flat_metrics()
         boundary_rounds = rounds if window is None else sorted({rounds[0], rounds[-1]})
         for round_id in boundary_rounds:
-            for key, value in outcomes[round_id].metrics.items():
+            for key, value in outcomes[round_id].flat_metrics().items():
                 outcome_metrics[f"round_{round_id}_{key}"] = value
         if spec.mode == "sham":
             # a sham must reproduce the unmodified target run; report the deviation
@@ -572,17 +572,19 @@ def apply_intervention(
                 recorded_at_round = _load_recorded(
                     target_recorder, spec.target_run_id, rounds[0], spec.stage, "target"
                 )
-                for key, value in recomputed.metrics.items():
+                recorded_flat = recorded_at_round.flat_metrics()
+                for key, value in recomputed.flat_metrics().items():
                     outcome_metrics[f"sham_deviation_{key}"] = (
-                        value - recorded_at_round.metrics.get(key, float("nan"))
+                        value - recorded_flat.get(key, float("nan"))
                     )
             else:
                 recorded_final = _load_recorded(
                     target_recorder, spec.target_run_id, cfg.rounds - 1, "evaluation", "target"
                 )
-                for key, value in outcomes[-1].metrics.items():
+                recorded_flat = recorded_final.flat_metrics()
+                for key, value in outcomes[-1].flat_metrics().items():
                     outcome_metrics[f"sham_deviation_{key}"] = (
-                        value - recorded_final.metrics.get(key, float("nan"))
+                        value - recorded_flat.get(key, float("nan"))
                     )
 
         return InterventionResult(spec=spec, valid=True, outcome_metrics=outcome_metrics)

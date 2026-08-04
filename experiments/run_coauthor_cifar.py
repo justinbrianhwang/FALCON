@@ -31,8 +31,14 @@ FAILURES = [
     # classes 0 (0.585) and 5 (0.953) — every other class sits at ~0 accuracy, so failures
     # targeting them have nothing to damage (selection gap was 0.0001 even at p=1.0). Minority-
     # targeted failures must aim at a class the reference actually learned (Plan §14.10).
+    #
+    # Round-3 lessons (local retry 2026-08-04): (1) the whipsaw regime has no memory — a window
+    # ending before the final round is erased by the clean tail (fail_selection r59 per-class
+    # was identical to ref), so the window must reach the last round; (2) global accuracy stays
+    # ~constant across collapse modes, so class-targeted failures are attributed on the recorded
+    # per-class metric of the targeted class (Plan §14.10 outcome vector).
     ("selection", FailureSpecification(
-        stage="selection", type="minority_exclusion", active_rounds=(10, 49), severity=3,
+        stage="selection", type="minority_exclusion", active_rounds=(10, 59), severity=3,
         parameters={"target_class": 5, "exclusion_probability": 1.0})),
     ("local", FailureSpecification(
         stage="local", type="lr_misconfig", active_rounds=(10, 49), severity=2,
@@ -41,9 +47,12 @@ FAILURES = [
         stage="compression", type="aggressive_topk", active_rounds=(10, 49), severity=2,
         parameters={"k_ratio": 0.05})),
     ("aggregation", FailureSpecification(
-        stage="aggregation", type="wrong_sample_weights", active_rounds=(10, 49), severity=2,
+        stage="aggregation", type="wrong_sample_weights", active_rounds=(10, 59), severity=2,
         parameters={"mode": "biased", "target_class": 5, "weight_multiplier": 0.1})),
 ]
+
+# Class-targeted failures are judged on the targeted class's accuracy; others on global.
+CASE_METRIC = {"selection": "class_5_accuracy", "aggregation": "class_5_accuracy"}
 
 
 def _record(root: Path, cfg: RunConfig) -> None:
@@ -64,12 +73,11 @@ def main() -> None:
 
     base = yaml.safe_load((REPO / "configs" / "cases" / "cifar10_reference.yaml").read_text(encoding="utf-8"))
     out = REPO / "results" / ("coauthor_cifar_smoke" if args.smoke else "coauthor_cifar")
+    active = None  # full run: each spec keeps its own window
     if args.smoke:
         base = yaml.safe_load((REPO / "configs" / "cases" / "mnist_reference.yaml").read_text(encoding="utf-8"))
         base["rounds"] = 4
         active = (1, 3)
-    else:
-        active = (10, 49)
     out.mkdir(parents=True, exist_ok=True)
 
     ref_cfg = RunConfig(**{**base, "run_id": "ref", "failure": None})
@@ -80,19 +88,22 @@ def main() -> None:
     for name, spec in FAILURES:
         if wanted is not None and name not in wanted:
             continue
-        spec = spec.model_copy(update={"active_rounds": active})
+        if active is not None:
+            spec = spec.model_copy(update={"active_rounds": active})
+        metric = CASE_METRIC.get(name, "accuracy")
         fail_id = f"fail_{name}"
         cfg = RunConfig(**{**base, "run_id": fail_id, "failure": spec})
         print(f"[cifar-suite] failure run: {name} ...", flush=True)
         _record(out, cfg)
-        print(f"[cifar-suite] attribution: {name} (interventions replay, slow)...", flush=True)
+        print(f"[cifar-suite] attribution: {name} on {metric} (interventions replay, slow)...", flush=True)
         try:
             report, interventions = analyze_pair(
-                out, "ref", fail_id, metric="accuracy", higher_is_better=True,
+                out, "ref", fail_id, metric=metric, higher_is_better=True,
                 min_gap=0.005, sham_tolerance=1e-9)
             (out / f"report_{name}.md").write_text(
                 render_markdown(report, interventions, ground_truth=spec), encoding="utf-8")
-            row = {"failure": name, "ground_truth": spec.stage, "outcome": report.outcome,
+            row = {"failure": name, "ground_truth": spec.stage, "metric": metric,
+                   "outcome": report.outcome,
                    "prediction": report.origin_ranking[0] if report.origin_ranking else None,
                    "origin_set": report.origin_set, "gap": report.failure_gap,
                    "notes": report.notes}
