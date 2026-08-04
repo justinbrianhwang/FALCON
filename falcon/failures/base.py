@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from falcon.schema import (
+    AggregationConfig,
     CompressionConfig,
     FailureSpecification,
     LocalConfig,
@@ -49,7 +50,7 @@ class FailureInjector:
         self._stream_name = f"failure.{spec.stage}"
 
     def _gen(self):
-        """The injector's own ``failure.<stage>`` stream (its ONLY stream)."""
+        """The injector's shared ``failure.<stage>`` stream."""
         return self._rng.stream(self._stream_name)
 
     def active(self, round_id: int) -> bool:
@@ -65,6 +66,11 @@ class FailureInjector:
     def local_cfg(self, client_id: str, cfg: LocalConfig, round_id: int) -> LocalConfig:
         return cfg.model_copy()
 
+    def local_data(
+        self, client_id: str, data: "ClientData", round_id: int
+    ) -> "ClientData":
+        return data
+
     def compression_cfg(
         self, client_id: str, cfg: CompressionConfig, round_id: int
     ) -> CompressionConfig:
@@ -72,6 +78,11 @@ class FailureInjector:
 
     def weights(self, weights: dict[str, float], round_id: int) -> dict[str, float]:
         return dict(weights)
+
+    def aggregation_cfg(
+        self, cfg: AggregationConfig, round_id: int
+    ) -> AggregationConfig:
+        return cfg.model_copy()
 
 
 def build_injector(
@@ -88,14 +99,26 @@ def build_injector(
         from .local.lr_misconfig import LrMisconfigInjector
 
         return LrMisconfigInjector(spec, partition, rng)
+    if spec.stage == "local" and spec.type == "label_corruption":
+        from .local.label_corruption import LabelCorruptionInjector
+
+        return LabelCorruptionInjector(spec, partition, rng)
     if spec.stage == "compression" and spec.type == "aggressive_topk":
         from .compression.aggressive_topk import AggressiveTopKInjector
 
         return AggressiveTopKInjector(spec, partition, rng)
+    if spec.stage == "compression" and spec.type == "aggressive_quantization":
+        from .compression.aggressive_quantization import AggressiveQuantizationInjector
+
+        return AggressiveQuantizationInjector(spec, partition, rng)
     if spec.stage == "aggregation" and spec.type == "wrong_sample_weights":
         from .aggregation.wrong_sample_weights import WrongSampleWeightsInjector
 
         return WrongSampleWeightsInjector(spec, partition, rng)
+    if spec.stage == "aggregation" and spec.type == "aggressive_clipping":
+        from .aggregation.aggressive_clipping import AggressiveClippingInjector
+
+        return AggressiveClippingInjector(spec, partition, rng)
     raise ValueError(
         f"unknown failure injector: stage={spec.stage!r} type={spec.type!r}"
     )

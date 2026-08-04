@@ -102,16 +102,18 @@ def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeSt
         # (CONTRACTS §1), never once per client.
         local_states = []
         for cid in selection.selected_ids:
+            local_data = partition[cid]
             local_cfg = cfg.local
             for injector in injectors:
+                local_data = injector.local_data(cid, local_data, round_id)
                 local_cfg = injector.local_cfg(cid, local_cfg, round_id)
             local_states.append(
                 _stage(
                     "local",
-                    lambda cid=cid, local_cfg=local_cfg: local_fn(
+                    lambda cid=cid, local_data=local_data, local_cfg=local_cfg: local_fn(
                         params,
                         cid,
-                        partition[cid],
+                        local_data,
                         round_id,
                         local_cfg,
                         rng,
@@ -143,11 +145,13 @@ def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeSt
         _record(recorder, round_id, "compression", compressed)
 
         weights = {s.client_id: float(s.num_examples) for s in local_states}
+        aggregation_cfg = cfg.aggregation
         for injector in injectors:
             weights = injector.weights(weights, round_id)
+            aggregation_cfg = injector.aggregation_cfg(aggregation_cfg, round_id)
         aggregation = _stage(
             "aggregation",
-            lambda: aggregate(compressed, weights, cfg.aggregation, rng),
+            lambda: aggregate(compressed, weights, aggregation_cfg, rng),
         )
         if overlay is not None:
             aggregation = overlay.override(round_id, "aggregation", aggregation)

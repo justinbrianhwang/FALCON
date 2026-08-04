@@ -182,6 +182,21 @@ def compress(local_state: ClientLocalState, cfg: CompressionConfig, rng: "Rng") 
         compressed = _topk(update, k)
         nnz = int(np.count_nonzero(compressed))
         bytes_transmitted = nnz * update.dtype.itemsize + nnz * 4
+    elif cfg.kind == "quantization":
+        raw_bits = cfg.parameters["bits"]
+        bits = int(raw_bits)
+        if bits != raw_bits or bits <= 0:
+            raise ValueError(f"quantization bits must be a positive integer, got {raw_bits}")
+        scale = float(np.max(np.abs(update))) if update.size else 0.0
+        levels = 2**bits - 1
+        if scale == 0.0:
+            compressed = update
+        else:
+            compressed = (
+                np.rint(update.astype(np.float64) / scale * levels)
+                * (scale / levels)
+            ).astype(update.dtype)
+        bytes_transmitted = math.ceil(update.size * bits / 8)
     else:
         raise NotImplementedError(f"compression kind {cfg.kind!r} not implemented yet")
     return CompressionState(
@@ -233,6 +248,15 @@ def aggregate(
         raise ValueError(f"aggregate() got duplicate client ids: {ids}")
     updates = np.stack([c.update for c in compressed])
     updates64 = np.asarray(updates, dtype=np.float64)  # float64 accumulation (T18)
+    if "clip_norm" in cfg.parameters:
+        clip_norm = float(cfg.parameters["clip_norm"])
+        if not math.isfinite(clip_norm) or clip_norm <= 0.0:
+            raise ValueError(f"clip_norm must be positive and finite, got {clip_norm}")
+        norms = np.linalg.norm(updates64, axis=1)
+        oversized = norms > clip_norm
+        if np.any(oversized):
+            updates64 = updates64.copy()
+            updates64[oversized] *= (clip_norm / norms[oversized])[:, None]
     uniform = np.full(len(ids), 1.0 / len(ids), dtype=np.float64)
     if cfg.rule == "weighted_mean":
         missing = sorted(set(ids) - set(weights))

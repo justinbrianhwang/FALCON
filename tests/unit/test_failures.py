@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 
 from falcon.failures import FailureInjector, build_injector
-from falcon.failures.aggregation import WrongSampleWeightsInjector
-from falcon.failures.compression import AggressiveTopKInjector
-from falcon.failures.local import LrMisconfigInjector
+from falcon.failures.aggregation import AggressiveClippingInjector, WrongSampleWeightsInjector
+from falcon.failures.compression import AggressiveQuantizationInjector, AggressiveTopKInjector
+from falcon.failures.local import LabelCorruptionInjector, LrMisconfigInjector
 from falcon.failures.selection import MinorityExclusionInjector
 from falcon.pipeline.stages import aggregate, compress
 from falcon.pipeline.synthetic_data import ClientData
@@ -97,15 +97,20 @@ def test_base_transforms_are_identity_even_when_active(partition):
     assert injector.candidate_pool(pool, 3) == pool
     assert injector.weights(weights, 3) == weights
     assert injector.local_cfg("client_0", local, 3) == local
+    assert injector.local_data("client_0", partition["client_0"], 3) is partition["client_0"]
     assert injector.compression_cfg("client_0", comp, 3) == comp
+    assert injector.aggregation_cfg(AggregationConfig(), 3) == AggregationConfig()
 
 
 def test_build_injector_dispatches(partition):
     cases = [
         (_spec("selection", "minority_exclusion", target_class=1, exclusion_probability=0.5), MinorityExclusionInjector),
         (_spec("local", "lr_misconfig", affected_clients=["client_0"], lr_multiplier=10.0), LrMisconfigInjector),
+        (_spec("local", "label_corruption", fraction_clients=0.5, flip_probability=0.5), LabelCorruptionInjector),
         (_spec("compression", "aggressive_topk", k_ratio=0.1), AggressiveTopKInjector),
+        (_spec("compression", "aggressive_quantization"), AggressiveQuantizationInjector),
         (_spec("aggregation", "wrong_sample_weights", mode="uniform"), WrongSampleWeightsInjector),
+        (_spec("aggregation", "aggressive_clipping"), AggressiveClippingInjector),
     ]
     for spec, cls in cases:
         assert isinstance(build_injector(spec, partition, Rng(0)), cls)
@@ -301,6 +306,99 @@ def test_lr_rejects_non_finite_fraction(partition):
         _lr_injector(partition, affected_clients=None, fraction=float("nan"))
     with pytest.raises(ValueError, match="fraction"):
         _lr_injector(partition, affected_clients=None, fraction=float("inf"))
+
+
+# --- L4: local / label_corruption ------------------------------------------
+
+
+def _label_injector(partition, seed=17, active=(1, 2), **params):
+    defaults = {"fraction_clients": 2 / 3, "flip_probability": 0.5}
+    defaults.update(params)
+    return LabelCorruptionInjector(
+        _spec("local", "label_corruption", active=active, **defaults),
+        partition,
+        Rng(seed),
+    )
+
+
+def test_label_corruption_is_deterministic_and_targets_sorted_prefix(partition):
+    first = _label_injector(partition, seed=19)
+    second = _label_injector(partition, seed=19)
+    assert first.affected_clients == frozenset({"client_0", "client_1"})
+    for cid in sorted(partition):
+        a = first.local_data(cid, partition[cid], 1)
+        b = second.local_data(cid, partition[cid], 1)
+        np.testing.assert_array_equal(a.y, b.y)
+        assert a.x is partition[cid].x
+    assert first.local_data("client_2", partition["client_2"], 1) is partition["client_2"]
+
+
+def test_label_corruption_client_order_independent(partition):
+    forward = _label_injector(partition, seed=23)
+    reverse = _label_injector(partition, seed=23)
+    forward_labels = {
+        cid: forward.local_data(cid, partition[cid], 1).y
+        for cid in sorted(partition)
+    }
+    reverse_labels = {
+        cid: reverse.local_data(cid, partition[cid], 1).y
+        for cid in reversed(sorted(partition))
+    }
+    for cid in partition:
+        np.testing.assert_array_equal(forward_labels[cid], reverse_labels[cid])
+
+
+def test_label_corruption_reference_and_inactive_data_are_untouched(partition):
+    injector = _label_injector(partition, active=(2, 3), flip_probability=1.0)
+    data = partition["client_0"]
+    assert injector.local_data("client_0", data, 1) is data
+    np.testing.assert_array_equal(data.y, partition["client_0"].y)
+
+
+def test_label_corruption_uses_per_client_round_streams(partition):
+    allowed = {
+        "failure.local.client_0.round.1",
+        "failure.local.client_1.round.1",
+    }
+    spy = SpyRng(17, allowed=allowed)
+    injector = LabelCorruptionInjector(
+        _spec(
+            "local",
+            "label_corruption",
+            active=(1, 1),
+            fraction_clients=2 / 3,
+            flip_probability=0.5,
+        ),
+        partition,
+        spy,
+    )
+    for cid in sorted(partition):
+        injector.local_data(cid, partition[cid], 1)
+    assert set(spy.requested) == allowed
+
+
+def test_aggressive_quantization_uses_severity_bits(partition):
+    cfg = CompressionConfig(kind="identity")
+    for severity, bits in ((1, 8), (2, 4), (3, 2)):
+        spec = _spec("compression", "aggressive_quantization").model_copy(
+            update={"severity": severity}
+        )
+        injector = AggressiveQuantizationInjector(spec, partition, Rng(1))
+        out = injector.compression_cfg("client_0", cfg, 0)
+        assert out.kind == "quantization"
+        assert out.parameters == {"bits": bits}
+
+
+def test_aggressive_clipping_uses_severity_norm(partition):
+    cfg = AggregationConfig(rule="trimmed_mean", parameters={"beta": 0.2})
+    for severity, clip_norm in ((1, 1.0), (2, 0.1), (3, 0.01)):
+        spec = _spec("aggregation", "aggressive_clipping").model_copy(
+            update={"severity": severity}
+        )
+        injector = AggressiveClippingInjector(spec, partition, Rng(1))
+        out = injector.aggregation_cfg(cfg, 0)
+        assert out.rule == "trimmed_mean"
+        assert out.parameters == {"beta": 0.2, "clip_norm": clip_norm}
 
 
 # --- C1: compression / aggressive_topk (+ stages.compress topk) --------------

@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import math
 
 import numpy as np
 import pytest
@@ -135,11 +136,24 @@ def test_compress_identity_round_trips_exactly(client_data, params):
     assert comp.client_id == local.client_id and comp.round_id == local.round_id
 
 
-def test_compress_quantization_not_implemented(client_data, params):
+def test_compress_quantization_shape_dtype_error_and_bytes(client_data, params):
     local_cfg = LocalConfig(lr=0.5, local_steps=1, batch_size=8)
     local = local_train(params, "client_0", client_data, 0, local_cfg, StubRng(5))
-    with pytest.raises(NotImplementedError):
-        compress(local, CompressionConfig(kind="quantization"), StubRng(5))
+    local.update = np.array(
+        [-1.0, -0.63, -0.2, 0.0, 0.17, 0.51, 0.9], dtype=np.float64
+    )
+    errors = []
+    for bits in (8, 4, 2):
+        state = compress(
+            local,
+            CompressionConfig(kind="quantization", parameters={"bits": bits}),
+            StubRng(5),
+        )
+        assert state.update.shape == local.update.shape
+        assert state.update.dtype == local.update.dtype
+        assert state.bytes_transmitted == math.ceil(local.update.size * bits / 8)
+        errors.append(float(np.linalg.norm(state.update - local.update)))
+    assert errors[0] <= errors[1] <= errors[2]
 
 
 def _compressed(client_id: str, update: np.ndarray, round_id: int = 0):
@@ -168,6 +182,37 @@ def test_aggregate_weighted_mean_matches_hand_computed():
     assert state.received_ids == ["client_a", "client_b"]
     assert state.accepted_ids == ["client_a", "client_b"]
     assert state.rejected_ids == []
+
+
+def test_aggregate_clip_norm_clips_oversized_update_before_weighting():
+    u1 = np.array([6.0, 8.0, 0.0, 0.0, 0.0, 0.0])
+    u2 = np.array([0.0, 4.0, 0.0, 0.0, 0.0, 0.0])
+    compressed = [_compressed("client_a", u1), _compressed("client_b", u2)]
+    state = aggregate(
+        compressed,
+        {"client_a": 1.0, "client_b": 3.0},
+        AggregationConfig(rule="weighted_mean", parameters={"clip_norm": 5.0}),
+        StubRng(9),
+    )
+    np.testing.assert_array_equal(state.aggregate, [0.75, 4.0, 0.0, 0.0, 0.0, 0.0])
+
+
+def test_aggregate_without_clip_norm_is_bitwise_unchanged():
+    updates = np.array(
+        [[1.0, -2.0, 0.5, 3.0, 0.0, -1.0], [-1.0, 2.0, 1.5, -3.0, 2.0, 1.0]]
+    )
+    compressed = [
+        _compressed("client_a", updates[0]),
+        _compressed("client_b", updates[1]),
+    ]
+    state = aggregate(
+        compressed,
+        {"client_a": 1.0, "client_b": 3.0},
+        AggregationConfig(rule="weighted_mean"),
+        StubRng(9),
+    )
+    expected = (np.array([0.25, 0.75])[:, None] * updates).sum(axis=0)
+    np.testing.assert_array_equal(state.aggregate, expected)
 
 
 def test_aggregate_uniform_mean():
