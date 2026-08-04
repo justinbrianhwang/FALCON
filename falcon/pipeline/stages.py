@@ -111,7 +111,7 @@ def local_train(
     cfg: LocalConfig,
     rng: "Rng",
 ) -> ClientLocalState:
-    """Plain minibatch SGD on softmax cross-entropy.
+    """Minibatch SGD on softmax cross-entropy, optionally with FedProx.
 
     Minibatches are drawn from stream ``client.<id>.round.<t>.dataloader``
     (CONTRACTS §3 v0.2): keying the stream by (client, round) makes a client's
@@ -127,6 +127,8 @@ def local_train(
     for _ in range(cfg.local_steps):
         idx = gen.integers(0, n, size=batch_size)
         loss, grad = _loss_and_grad(params, data.x[idx], data.y[idx])
+        if cfg.algorithm == "fedprox" and cfg.prox_mu != 0.0:
+            grad = grad + cfg.prox_mu * (params - model_params)
         params -= cfg.lr * grad
         loss_history.append(loss)
     return ClientLocalState(

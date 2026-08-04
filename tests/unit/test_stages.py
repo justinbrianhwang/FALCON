@@ -124,6 +124,37 @@ def test_local_train_update_is_delta(client_data, params):
     assert np.array_equal(state.update, np.zeros_like(params))
 
 
+def test_fedprox_local_step_matches_closed_form(monkeypatch):
+    """The first step starts at global; hand-check the proximal second step."""
+    gradient = np.array([4.0])
+    monkeypatch.setattr(
+        "falcon.pipeline.stages._loss_and_grad",
+        lambda params, x, y: (3.0, gradient.copy()),
+    )
+    global_params = np.array([2.0])
+    data = ClientData(x=np.zeros((1, 1)), y=np.zeros(1, dtype=np.int64))
+    lr, mu = 0.1, 0.5
+
+    state = local_train(
+        global_params,
+        "client_0",
+        data,
+        0,
+        LocalConfig(
+            lr=lr,
+            local_steps=2,
+            batch_size=1,
+            algorithm="fedprox",
+            prox_mu=mu,
+        ),
+        StubRng(3),
+    )
+
+    # w1 = w0 - lr*g; w2 = w1 - lr*(g + mu*(w1 - w0)).
+    expected = -2 * lr * gradient + mu * lr**2 * gradient
+    np.testing.assert_allclose(state.update, expected, rtol=0, atol=1e-15)
+
+
 def test_compress_identity_round_trips_exactly(client_data, params):
     local_cfg = LocalConfig(lr=0.5, local_steps=2, batch_size=8)
     local = local_train(params, "client_0", client_data, 0, local_cfg, StubRng(5))

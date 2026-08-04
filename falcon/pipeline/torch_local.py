@@ -46,7 +46,7 @@ def local_train(
     model_cfg: "ModelConfig",
     dataset_cfg: "DatasetConfig",
 ) -> ClientLocalState:
-    """Minibatch SGD on softmax cross-entropy, SmallCNN torch implementation.
+    """Minibatch SGD on softmax cross-entropy, optionally with FedProx.
 
     Mirrors the synthetic stage contract (CONTRACTS §1): the returned
     ``update`` is the flat delta ``trained - global`` (float32), NOT the
@@ -68,6 +68,9 @@ def local_train(
     # torch.optim rejects negative learning rates, but lr_misconfig uses a
     # negative multiplier to model a sign error (the numpy path supports it).
     optimizer = torch.optim.SGD(model.parameters(), lr=abs(cfg.lr))
+    global_parameters = None
+    if cfg.algorithm == "fedprox" and cfg.prox_mu != 0.0:
+        global_parameters = [parameter.detach().clone() for parameter in model.parameters()]
 
     x_all = torch.from_numpy(np.ascontiguousarray(data.x))
     y_all = torch.from_numpy(np.ascontiguousarray(data.y))
@@ -79,6 +82,13 @@ def local_train(
         optimizer.zero_grad()
         logits = model(x_all[idx])
         loss = F.cross_entropy(logits, y_all[idx])
+        if global_parameters is not None:
+            loss = loss + cfg.prox_mu / 2 * sum(
+                ((parameter - global_parameter) ** 2).sum()
+                for parameter, global_parameter in zip(
+                    model.parameters(), global_parameters
+                )
+            )
         loss.backward()
         if cfg.lr < 0:
             for parameter in model.parameters():

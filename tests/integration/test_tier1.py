@@ -97,6 +97,45 @@ def test_torch_local_supports_negative_lr_sign_error():
     np.testing.assert_allclose(negative.update, -positive.update, rtol=1e-4, atol=1e-7)
 
 
+def test_torch_fedprox_zero_is_fedavg_and_positive_is_deterministic():
+    dataset = DatasetConfig(name="mnist", num_clients=1, num_classes=10)
+    model_cfg = ModelConfig(name="small_cnn")
+    initial = flatten(build_model(model_cfg, dataset, Rng(7)))
+    data = ClientData(
+        x=np.zeros((4, 1, 28, 28), dtype=np.float32),
+        y=np.array([0, 1, 2, 3], dtype=np.int64),
+    )
+
+    def train(algorithm="fedavg", prox_mu=0.0):
+        return local_train(
+            initial,
+            "client_0",
+            data,
+            0,
+            LocalConfig(
+                lr=0.1,
+                local_steps=2,
+                batch_size=4,
+                algorithm=algorithm,
+                prox_mu=prox_mu,
+            ),
+            Rng(11),
+            model_cfg=model_cfg,
+            dataset_cfg=dataset,
+        )
+
+    fedavg = train()
+    zero = train("fedprox", 0.0)
+    prox_a = train("fedprox", 0.5)
+    prox_b = train("fedprox", 0.5)
+
+    assert np.array_equal(zero.update, fedavg.update)
+    assert zero.loss_history == fedavg.loss_history
+    assert not np.array_equal(prox_a.update, fedavg.update)
+    assert np.array_equal(prox_a.update, prox_b.update)
+    assert prox_a.loss_history == prox_b.loss_history
+
+
 @pytest.fixture(scope="module")
 def mnist_reference(tmp_path_factory):
     """One recorded run of the committed MNIST reference case, shared by tests."""

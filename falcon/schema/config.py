@@ -15,6 +15,8 @@ class LocalConfig(BaseModel):
     lr: float
     local_steps: int
     batch_size: int
+    algorithm: Literal["fedavg", "fedprox"] = "fedavg"
+    prox_mu: float = 0.0
 
 
 class CompressionConfig(BaseModel):
