@@ -203,3 +203,80 @@ def analyze_pair(
         decisive_margin=decisive_margin,
     )
     return report, interventions
+
+
+def analyze_pair_vector(
+    runs_root: Path,
+    reference_run_id: str,
+    failure_run_id: str,
+    *,
+    metrics: dict[str, dict],
+    min_gap: float,
+    sham_tolerance: float,
+    rounds: list[int] | None = None,
+    epsilon_tie: float = 1e-9,
+    decisive_margin: float = 0.05,
+) -> tuple[dict[str, AttributionReport], list[InterventionResult]]:
+    """Metric-specific attribution over ONE shared intervention set (Plan 14.10).
+
+    ``metrics`` maps metric name to ``{"higher_is_better": bool}`` with an
+    optional per-metric ``"min_gap"`` overriding the shared default. The first
+    metric drives the (expensive) intervention replay; every other metric is a
+    pure re-analysis of the same evidence, so the vector costs no more replay
+    than a single-metric run. Put a metric that is always recorded (e.g.
+    ``accuracy``) first — an early-exit on the first metric returns no
+    interventions to re-analyze.
+    """
+    runs_root = Path(runs_root)
+    names = list(metrics)
+    first = names[0]
+    report, interventions = analyze_pair(
+        runs_root,
+        reference_run_id,
+        failure_run_id,
+        metric=first,
+        higher_is_better=metrics[first]["higher_is_better"],
+        min_gap=metrics[first].get("min_gap", min_gap),
+        sham_tolerance=sham_tolerance,
+        rounds=rounds,
+        epsilon_tie=epsilon_tie,
+        decisive_margin=decisive_margin,
+    )
+    reports = {first: report}
+    if not interventions:
+        return reports, interventions
+
+    reference = _metadata(runs_root, reference_run_id)
+    failure = _metadata(runs_root, failure_run_id)
+    ref_flat = Recorder(runs_root, reference_run_id).load(
+        reference.rounds - 1, "evaluation"
+    ).flat_metrics()
+    fail_flat = Recorder(runs_root, failure_run_id).load(
+        failure.rounds - 1, "evaluation"
+    ).flat_metrics()
+    for name in names[1:]:
+        if name not in ref_flat or name not in fail_flat:
+            reports[name] = AttributionReport(
+                pair=report.pair,
+                outcome="unresolved",
+                failure_gap={},
+                stage_effects={},
+                origin_ranking=[],
+                origin_set=[],
+                roles={},
+                notes=[f"MISSING_METRIC:{name}"],
+            )
+            continue
+        reports[name] = attribute(
+            report.pair,
+            interventions,
+            metric=name,
+            m_ref=ref_flat[name],
+            m_fail=fail_flat[name],
+            higher_is_better=metrics[name]["higher_is_better"],
+            min_gap=metrics[name].get("min_gap", min_gap),
+            sham_tolerance=sham_tolerance,
+            epsilon_tie=epsilon_tie,
+            decisive_margin=decisive_margin,
+        )
+    return reports, interventions

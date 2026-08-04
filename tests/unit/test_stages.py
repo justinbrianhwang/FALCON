@@ -383,6 +383,33 @@ def test_evaluate_on_separable_data():
     assert outcome.model_hash == hashlib.sha256(params.tobytes()).hexdigest()
 
 
+def test_flat_metrics_exposes_per_class_and_vector_aggregates():
+    from statistics import pstdev
+
+    from falcon.schema import OutcomeState
+
+    outcome = OutcomeState(
+        round_id=0,
+        model_hash="h",
+        metrics={"accuracy": 0.5, "loss": 1.0},
+        per_class={
+            "0": {"accuracy": 0.2},
+            "1": {"accuracy": 0.8},
+            "2": {"accuracy": 0.5},
+        },
+    )
+    flat = outcome.flat_metrics()
+    assert flat["accuracy"] == 0.5 and flat["loss"] == 1.0
+    assert flat["class_0_accuracy"] == 0.2
+    assert flat["class_1_accuracy"] == 0.8
+    assert flat["macro_recall"] == pytest.approx(0.5)
+    assert flat["worst_class_accuracy"] == 0.2
+    assert flat["fairness_dispersion"] == pytest.approx(pstdev([0.2, 0.8, 0.5]))
+    # no per_class recorded -> no derived aggregates, base metrics untouched
+    bare = OutcomeState(round_id=0, model_hash="h", metrics={"loss": 2.0})
+    assert bare.flat_metrics() == {"loss": 2.0}
+
+
 # --- CONTRACTS section 3 stream-registry compliance (T2-F finding 5) ---
 
 

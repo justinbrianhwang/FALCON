@@ -1,4 +1,5 @@
 """Stage-boundary state schemas (contract v0.1, see docs/CONTRACTS.md)."""
+from statistics import fmean, pstdev
 from typing import Any, Literal, Optional
 
 import numpy as np
@@ -61,14 +62,25 @@ class OutcomeState(_ArrayModel):
     per_class: dict[str, dict[str, float]] = Field(default_factory=dict)
 
     def flat_metrics(self) -> dict[str, float]:
-        """Metrics plus per-class entries as ``class_<c>_<name>`` (Plan 14.10).
-
-        Read-time view only; the recorded state (and its hash) is unchanged.
+        """Metrics plus per-class entries as ``class_<c>_<name>``, and the
+        outcome-vector aggregates derivable from them (Plan 14.10):
+        macro_recall, worst_class_accuracy, fairness_dispersion (population
+        std of per-class accuracy). Read-time view only; the recorded state
+        (and its hash) is unchanged.
         """
         out = dict(self.metrics)
+        accuracies = []
         for cls, entries in self.per_class.items():
             for name, value in entries.items():
                 out[f"class_{cls}_{name}"] = value
+            if "accuracy" in entries:
+                accuracies.append(entries["accuracy"])
+        if accuracies:
+            out["macro_recall"] = fmean(accuracies)
+            out["worst_class_accuracy"] = min(accuracies)
+            out["fairness_dispersion"] = (
+                pstdev(accuracies) if len(accuracies) > 1 else 0.0
+            )
         return out
 
 
