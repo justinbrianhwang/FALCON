@@ -19,6 +19,24 @@ whenever a measurable gap survives, aggregation still scores as a faithful
 carrier (nSRE/nSIE 1.0, no negative scores). FALCON's prediction is correct in
 all 8 sufficient-gap cells.
 
+### T27 extension: 4 rules x 4 failures (adds krum + L5 model poisoning)
+
+| failure | weighted_mean | median | trimmed_mean | krum |
+|---|---|---|---|---|
+| selection | selection V (+0.018) | insufficient (+0.004) | selection V (+0.008) | selection V (+0.006) |
+| local | local V (+0.022) | local V (+0.006) | local V (+0.010) | local V (+0.010) |
+| compression | compression V (+0.032) | compression V (+0.042) | compression V (+0.038) | compression V (+0.038) |
+| poisoning (L5, gt local) | **local V (+0.108)** | insufficient (**0.000**) | insufficient (-0.002) | local V (+0.006) |
+
+The poisoning row completes the H4 gradient: sign-flip poisoning devastates
+weighted_mean (+0.108, correctly localized to local), is FULLY NEUTRALIZED by
+median and trimmed_mean (gap exactly 0 / noise-negative — nothing left to
+attribute, and the gate correctly refuses), and leaves a small residue under
+krum (+0.006, still correctly localized — selecting one honest update forfeits
+averaging variance reduction). A "failure" an aggregator genuinely absorbs is
+not a failure at the outcome level; FALCON's insufficient-gap gate encodes
+exactly that. 12/12 sufficient-gap cells correct across the 4x4.
+
 ## Compound failures (S1+C1, S1+A1), synthetic, 10 rounds
 
 Both cases: outcome `unresolved`, origin_set {selection, aggregation},
