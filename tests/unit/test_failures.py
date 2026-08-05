@@ -13,8 +13,12 @@ import pytest
 from falcon.failures import FailureInjector, build_injector
 from falcon.failures.aggregation import AggressiveClippingInjector, WrongSampleWeightsInjector
 from falcon.failures.compression import AggressiveQuantizationInjector, AggressiveTopKInjector
-from falcon.failures.local import LabelCorruptionInjector, LrMisconfigInjector
-from falcon.failures.selection import MinorityExclusionInjector
+from falcon.failures.local import (
+    LabelCorruptionInjector,
+    LrMisconfigInjector,
+    ModelPoisoningInjector,
+)
+from falcon.failures.selection import AvailabilityBiasInjector, MinorityExclusionInjector
 from falcon.pipeline.stages import aggregate, compress
 from falcon.pipeline.synthetic_data import ClientData
 from falcon.replay.rng import Rng
@@ -98,6 +102,8 @@ def test_base_transforms_are_identity_even_when_active(partition):
     assert injector.weights(weights, 3) == weights
     assert injector.local_cfg("client_0", local, 3) == local
     assert injector.local_data("client_0", partition["client_0"], 3) is partition["client_0"]
+    state = _local_state(np.ones(4))
+    assert injector.local_state("client_0", state, 3) is state
     assert injector.compression_cfg("client_0", comp, 3) == comp
     assert injector.aggregation_cfg(AggregationConfig(), 3) == AggregationConfig()
 
@@ -105,8 +111,10 @@ def test_base_transforms_are_identity_even_when_active(partition):
 def test_build_injector_dispatches(partition):
     cases = [
         (_spec("selection", "minority_exclusion", target_class=1, exclusion_probability=0.5), MinorityExclusionInjector),
+        (_spec("selection", "availability_bias", biased_fraction=0.5), AvailabilityBiasInjector),
         (_spec("local", "lr_misconfig", affected_clients=["client_0"], lr_multiplier=10.0), LrMisconfigInjector),
         (_spec("local", "label_corruption", fraction_clients=0.5, flip_probability=0.5), LabelCorruptionInjector),
+        (_spec("local", "model_poisoning", fraction_clients=0.5), ModelPoisoningInjector),
         (_spec("compression", "aggressive_topk", k_ratio=0.1), AggressiveTopKInjector),
         (_spec("compression", "aggressive_quantization"), AggressiveQuantizationInjector),
         (_spec("aggregation", "wrong_sample_weights", mode="uniform"), WrongSampleWeightsInjector),
@@ -215,6 +223,70 @@ def test_exclusion_rejects_non_finite_probability(partition):
     for bad in (float("nan"), float("inf"), -float("inf")):
         with pytest.raises(ValueError, match="exclusion_probability"):
             _selection_injector(partition, p=bad)
+
+
+# --- S2: selection / availability_bias -------------------------------------
+
+
+def _availability_injector(partition, seed=7, active=(1, 20), **params):
+    defaults = {"biased_fraction": 2 / 3, "availability": 0.5}
+    defaults.update(params)
+    return AvailabilityBiasInjector(
+        _spec("selection", "availability_bias", active=active, **defaults),
+        partition,
+        Rng(seed),
+    )
+
+
+def test_availability_bias_deterministic_and_client_order_independent(partition):
+    forward = _availability_injector(partition, seed=11)
+    reverse = _availability_injector(partition, seed=11)
+    pool = sorted(partition)
+    for round_id in range(1, 21):
+        assert forward.candidate_pool(pool, round_id) == reverse.candidate_pool(
+            list(reversed(pool)), round_id
+        )
+
+
+def test_availability_bias_reference_is_untouched(partition):
+    injector = _availability_injector(partition, active=(2, 3))
+    pool = ["client_2", "client_0", "client_1"]
+    out = injector.candidate_pool(pool, 1)
+    assert out == pool
+    assert out is not pool
+    assert pool == ["client_2", "client_0", "client_1"]
+
+
+def test_availability_bias_exclusion_is_stochastic(partition):
+    injector = _availability_injector(partition, active=(0, 99))
+    presence = [
+        "client_0" in injector.candidate_pool(sorted(partition), round_id)
+        for round_id in range(100)
+    ]
+    assert any(presence)
+    assert not all(presence)
+    assert injector.biased_clients == frozenset({"client_0", "client_1"})
+
+
+def test_availability_bias_uses_per_client_round_streams(partition):
+    allowed = {
+        "failure.selection.client_0.round.1",
+        "failure.selection.client_1.round.1",
+    }
+    spy = SpyRng(7, allowed=allowed)
+    injector = AvailabilityBiasInjector(
+        _spec(
+            "selection",
+            "availability_bias",
+            active=(1, 1),
+            biased_fraction=2 / 3,
+            availability=0.5,
+        ),
+        partition,
+        spy,
+    )
+    injector.candidate_pool(sorted(partition), 1)
+    assert set(spy.requested) == allowed
 
 
 # --- L1: local / lr_misconfig ------------------------------------------------
@@ -375,6 +447,44 @@ def test_label_corruption_uses_per_client_round_streams(partition):
     for cid in sorted(partition):
         injector.local_data(cid, partition[cid], 1)
     assert set(spy.requested) == allowed
+
+
+# --- L5: local / model_poisoning -------------------------------------------
+
+
+def _poisoning_injector(partition, seed=17, active=(1, 2), **params):
+    defaults = {"fraction_clients": 2 / 3, "scale": 5.0}
+    defaults.update(params)
+    return ModelPoisoningInjector(
+        _spec("local", "model_poisoning", active=active, **defaults),
+        partition,
+        Rng(seed),
+    )
+
+
+def test_model_poisoning_replaces_update_only(partition):
+    injector = _poisoning_injector(partition, scale=3.0)
+    state = _local_state(np.array([1.0, -2.0, 0.5]))
+    poisoned = injector.local_state("client_0", state, 1)
+    np.testing.assert_array_equal(poisoned.update, -3.0 * state.update)
+    assert poisoned.model_copy(update={"update": state.update}) == state
+    np.testing.assert_array_equal(state.update, [1.0, -2.0, 0.5])
+
+
+def test_model_poisoning_reference_and_unaffected_states_are_untouched(partition):
+    injector = _poisoning_injector(partition, active=(2, 3))
+    affected = _local_state(np.ones(3), "client_0")
+    unaffected = _local_state(np.ones(3), "client_2")
+    assert injector.local_state("client_0", affected, 1) is affected
+    assert injector.local_state("client_2", unaffected, 2) is unaffected
+
+
+def test_model_poisoning_affected_set_is_deterministic(partition):
+    first = _poisoning_injector(partition, seed=1)
+    second = _poisoning_injector(partition, seed=99)
+    assert first.affected_clients == second.affected_clients == frozenset(
+        {"client_0", "client_1"}
+    )
 
 
 def test_aggressive_quantization_uses_severity_bits(partition):

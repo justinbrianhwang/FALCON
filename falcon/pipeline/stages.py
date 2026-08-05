@@ -217,16 +217,19 @@ def aggregate(
     cfg: AggregationConfig,
     rng: "Rng",
 ) -> AggregationState:
-    """Combine client updates into one flat update; four rules (CONTRACTS §1).
+    """Combine client updates into one flat update; five rules (CONTRACTS §1).
 
     ``weighted_mean`` weights by the ``weights`` arg (num_examples);
     ``uniform_mean`` averages all received updates equally. ``median`` and
-    ``trimmed_mean`` (T21, E5 prerequisites — Plan §4.4/§18.4) are
+    ``trimmed_mean`` (T21, E5 prerequisites - Plan §4.4/§18.4) are
     coordinate-wise and unweighted BY DEFINITION: the ``weights`` arg is
     ignored entirely (never validated) and ``AggregationState.weights``
     records the nominal uniform 1/n per received client — the actually-used
     weighting. Both robust rules act per coordinate and never reject whole
     clients, so ``accepted_ids == received_ids`` and ``rejected_ids == []``.
+    ``krum`` scores each update by its squared distances to the
+    ``n - byzantine_f - 2`` nearest peers and accepts only the lowest-scoring
+    client (ties go to the lowest client id).
 
     Conventions:
     - ``median``: numpy's standard midpoint average — for an even client
@@ -260,6 +263,9 @@ def aggregate(
             updates64 = updates64.copy()
             updates64[oversized] *= (clip_norm / norms[oversized])[:, None]
     uniform = np.full(len(ids), 1.0 / len(ids), dtype=np.float64)
+    received_ids = list(ids)
+    accepted_ids = list(ids)
+    rejected_ids: list[str] = []
     if cfg.rule == "weighted_mean":
         missing = sorted(set(ids) - set(weights))
         extra = sorted(set(weights) - set(ids))
@@ -293,14 +299,46 @@ def aggregate(
         kept = np.sort(updates64, axis=0, kind="stable")[k : n - k]
         coeffs = uniform
         combined = kept.mean(axis=0)
+    elif cfg.rule == "krum":
+        raw_f = cfg.parameters.get("byzantine_f", 1)
+        if isinstance(raw_f, bool):
+            raise ValueError(f"krum byzantine_f must be a nonnegative integer, got {raw_f}")
+        byzantine_f = int(raw_f)
+        if byzantine_f != raw_f or byzantine_f < 0:
+            raise ValueError(
+                f"krum byzantine_f must be a nonnegative integer, got {raw_f}"
+            )
+        n = len(ids)
+        if n < byzantine_f + 3:
+            raise ValueError(
+                f"krum needs n >= f + 3, got n={n}, f={byzantine_f}"
+            )
+        order = np.argsort(ids)
+        received_ids = [ids[int(i)] for i in order]
+        krum_updates = updates64[order]
+        deltas = krum_updates[:, None, :] - krum_updates[None, :, :]
+        distances = np.sum(deltas * deltas, axis=2)
+        np.fill_diagonal(distances, np.inf)
+        neighbors = n - byzantine_f - 2
+        scores = np.sort(distances, axis=1)[:, :neighbors].sum(axis=1)
+        winner_index = int(np.argmin(scores))
+        winner = received_ids[winner_index]
+        accepted_ids = [winner]
+        rejected_ids = [cid for cid in received_ids if cid != winner]
+        coeffs = np.array([1.0])
+        combined = krum_updates[winner_index]
     else:
         raise NotImplementedError(f"aggregation rule {cfg.rule!r} not implemented yet")
     return AggregationState(
         round_id=compressed[0].round_id,
-        received_ids=ids,
-        accepted_ids=list(ids),
-        rejected_ids=[],
-        weights={cid: float(c) for cid, c in zip(ids, coeffs)},
+        received_ids=received_ids,
+        accepted_ids=accepted_ids,
+        rejected_ids=rejected_ids,
+        weights=(
+            {accepted_ids[0]: 1.0}
+            if cfg.rule == "krum"
+            else {cid: float(c) for cid, c in zip(ids, coeffs)}
+        ),
         aggregate=combined.astype(updates.dtype, copy=False),
     )
 

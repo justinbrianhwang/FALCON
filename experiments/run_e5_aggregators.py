@@ -1,6 +1,6 @@
 """E5 - aggregator-role matrix (H4, task T22).
 
-    python experiments/run_e5_aggregators.py            # full: 3 rules x 3 failures, 10 rounds
+    python experiments/run_e5_aggregators.py            # full: 4 rules x 4 failures, 10 rounds
     python experiments/run_e5_aggregators.py --smoke    # 2 rules x 1 failure, 4 rounds
 
 H4 (Plan section 8): the aggregation stage's propagation role depends on the
@@ -39,6 +39,7 @@ RULES = {
     "weighted_mean": {},
     "median": {},
     "trimmed_mean": {"beta": 0.2},
+    "krum": {"byzantine_f": 1},
 }
 
 # Failure specs: parameter shapes and active_rounds copied from
@@ -55,6 +56,9 @@ FAILURES = [
     ("compression", FailureSpecification(
         stage="compression", type="aggressive_topk", active_rounds=(2, 9), severity=2,
         parameters={"k_ratio": 0.05})),
+    ("poisoning", FailureSpecification(
+        stage="local", type="model_poisoning", active_rounds=(2, 9), severity=2,
+        parameters={"fraction_clients": 0.2})),
 ]
 
 # Smoke mode: the H4 core contrast (faithful carrier vs robust rule) on the

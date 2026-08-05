@@ -428,6 +428,71 @@ def test_aggregate_trimmed_mean_deterministic_and_client_order_independent():
     assert np.array_equal(forward.aggregate, reversed_.aggregate)
 
 
+# --- Krum robust rule (T27) -------------------------------------------------
+
+
+def test_aggregate_krum_hand_computed_winner_with_outlier():
+    ids = ["client_a", "client_b", "client_c", "client_outlier"]
+    updates = [np.full(6, value) for value in (0.0, 0.1, 0.4, 100.0)]
+    compressed = [_compressed(cid, update) for cid, update in zip(ids, updates)]
+    state = aggregate(
+        compressed,
+        {},
+        AggregationConfig(rule="krum", parameters={"byzantine_f": 1}),
+        StubRng(9),
+    )
+    np.testing.assert_array_equal(state.aggregate, updates[0])
+    assert state.received_ids == ids
+    assert state.accepted_ids == ["client_a"]
+    assert state.rejected_ids == ["client_b", "client_c", "client_outlier"]
+    assert state.weights == {"client_a": 1.0}
+
+
+def test_aggregate_krum_rejects_too_few_updates():
+    compressed = [
+        _compressed(f"client_{i}", np.full(6, float(i))) for i in range(3)
+    ]
+    with pytest.raises(ValueError, match=r"n >= f \+ 3"):
+        aggregate(
+            compressed,
+            {},
+            AggregationConfig(rule="krum", parameters={"byzantine_f": 1}),
+            StubRng(9),
+        )
+
+
+def test_aggregate_krum_client_order_independent():
+    pairs = [
+        ("client_d", np.full(6, 100.0)),
+        ("client_b", np.full(6, 0.1)),
+        ("client_a", np.zeros(6)),
+        ("client_c", np.full(6, 0.4)),
+    ]
+    cfg = AggregationConfig(rule="krum", parameters={"byzantine_f": 1})
+    forward = aggregate(
+        [_compressed(cid, update) for cid, update in pairs], {}, cfg, StubRng(9)
+    )
+    reverse = aggregate(
+        [_compressed(cid, update) for cid, update in reversed(pairs)],
+        {},
+        cfg,
+        StubRng(9),
+    )
+    np.testing.assert_array_equal(forward.aggregate, reverse.aggregate)
+    assert forward.model_dump(exclude={"aggregate"}) == reverse.model_dump(
+        exclude={"aggregate"}
+    )
+
+
+def test_aggregate_krum_preserves_float32_dtype():
+    compressed = [
+        _compressed(f"client_{i}", np.full(6, value, dtype=np.float32))
+        for i, value in enumerate((0.0, 0.1, 0.4, 100.0))
+    ]
+    state = aggregate(compressed, {}, AggregationConfig(rule="krum"), StubRng(9))
+    assert state.aggregate.dtype == np.float32
+
+
 @pytest.mark.parametrize("rule", ["median", "trimmed_mean"])
 def test_aggregate_robust_rules_preserve_float32_dtype(rule):
     """Tier-1 contract (T18): float32 updates aggregate to float32."""

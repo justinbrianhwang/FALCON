@@ -25,7 +25,7 @@ class CompressionConfig(BaseModel):
 
 
 class AggregationConfig(BaseModel):
-    rule: Literal["weighted_mean", "uniform_mean", "median", "trimmed_mean"] = "weighted_mean"
+    rule: Literal["weighted_mean", "uniform_mean", "median", "trimmed_mean", "krum"] = "weighted_mean"
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 

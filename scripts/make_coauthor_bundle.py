@@ -20,6 +20,7 @@ GUIDES = {
     "coauthor": "COAUTHOR.md",
     "raf": "COAUTHOR_RAF.md",
     "ko": "COAUTHOR_KO.md",
+    "3": "COAUTHOR_3.md",
 }
 
 

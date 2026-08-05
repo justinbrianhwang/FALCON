@@ -107,20 +107,21 @@ def run(cfg: RunConfig, recorder=None, rng=None, overlay=None) -> list[OutcomeSt
             for injector in injectors:
                 local_data = injector.local_data(cid, local_data, round_id)
                 local_cfg = injector.local_cfg(cid, local_cfg, round_id)
-            local_states.append(
-                _stage(
-                    "local",
-                    lambda cid=cid, local_data=local_data, local_cfg=local_cfg: local_fn(
-                        params,
-                        cid,
-                        local_data,
-                        round_id,
-                        local_cfg,
-                        rng,
-                        **model_kwargs,
-                    ),
-                )
+            state = _stage(
+                "local",
+                lambda cid=cid, local_data=local_data, local_cfg=local_cfg: local_fn(
+                    params,
+                    cid,
+                    local_data,
+                    round_id,
+                    local_cfg,
+                    rng,
+                    **model_kwargs,
+                ),
             )
+            for injector in injectors:
+                state = injector.local_state(cid, state, round_id)
+            local_states.append(state)
         if overlay is not None:
             local_states = overlay.override(round_id, "local", local_states)
         _record(recorder, round_id, "local", local_states)

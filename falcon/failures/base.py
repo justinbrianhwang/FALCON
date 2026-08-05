@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from falcon.schema import (
     AggregationConfig,
+    ClientLocalState,
     CompressionConfig,
     FailureSpecification,
     LocalConfig,
@@ -71,6 +72,11 @@ class FailureInjector:
     ) -> "ClientData":
         return data
 
+    def local_state(
+        self, client_id: str, state: ClientLocalState, round_id: int
+    ) -> ClientLocalState:
+        return state
+
     def compression_cfg(
         self, client_id: str, cfg: CompressionConfig, round_id: int
     ) -> CompressionConfig:
@@ -95,6 +101,10 @@ def build_injector(
         from .selection.minority_exclusion import MinorityExclusionInjector
 
         return MinorityExclusionInjector(spec, partition, rng)
+    if spec.stage == "selection" and spec.type == "availability_bias":
+        from .selection.availability_bias import AvailabilityBiasInjector
+
+        return AvailabilityBiasInjector(spec, partition, rng)
     if spec.stage == "local" and spec.type == "lr_misconfig":
         from .local.lr_misconfig import LrMisconfigInjector
 
@@ -103,6 +113,10 @@ def build_injector(
         from .local.label_corruption import LabelCorruptionInjector
 
         return LabelCorruptionInjector(spec, partition, rng)
+    if spec.stage == "local" and spec.type == "model_poisoning":
+        from .local.model_poisoning import ModelPoisoningInjector
+
+        return ModelPoisoningInjector(spec, partition, rng)
     if spec.stage == "compression" and spec.type == "aggressive_topk":
         from .compression.aggressive_topk import AggressiveTopKInjector
 
